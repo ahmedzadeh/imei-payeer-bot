@@ -125,7 +125,6 @@ async def check_imei(update: Update, context: CallbackContext):
 
 # Initialize application
 application = Application.builder().token(TOKEN).build()
-
 application.add_handler(CommandHandler("start", start))
 application.add_handler(CommandHandler("check", check_imei))
 application.add_handler(CommandHandler("help", help_command))
@@ -134,7 +133,13 @@ application.add_handler(CommandHandler("help", help_command))
 @app.route(f"/{TOKEN}", methods=["POST"])
 def webhook():
     update = Update.de_json(request.get_json(force=True), bot)
-    asyncio.create_task(application.process_update(update))
+
+    async def handle():
+        await application.initialize()
+        await application.process_update(update)
+        await application.shutdown()
+
+    asyncio.run(handle())
     return "OK"
 
 @app.route("/")
