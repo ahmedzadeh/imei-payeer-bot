@@ -20,9 +20,9 @@ PAYMENTS_FILE = "payments.json"
 
 # Initialize application and register handlers once
 application = Application.builder().token(TOKEN).build()
-application.add_handler(CommandHandler("start", lambda update, context: start(update, context)))
-application.add_handler(CommandHandler("check", lambda update, context: check_imei(update, context)))
-application.add_handler(CommandHandler("help", lambda update, context: help_command(update, context)))
+application.add_handler(CommandHandler("start", start))
+application.add_handler(CommandHandler("check", check_imei))
+application.add_handler(CommandHandler("help", help_command))
 
 # Utilities
 def has_paid(user_id, imei):
