@@ -5,24 +5,20 @@ import os
 import base64
 from flask import Flask, request, abort
 from telegram import Bot, Update
-from telegram.ext import CommandHandler, Dispatcher, CallbackContext
-from telegram.ext import MessageHandler, filters
+from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, filters
 
-# Environment variables (for deployment)
 TOKEN = os.getenv("BOT_TOKEN", "8018027330:AAGbqSQ5wQvLj2rPGXQ_MOWU3I8z7iUpjPw")
 API_KEY = os.getenv("PROIMEI_API_KEY", "PKZ-HK5-K6H-MRF-AXE-5VZ-LCN-W6L")
 API_URL = "https://proimei.info/en/prepaid/api"
 PAYEER_MERCHANT_ID = os.getenv("PAYEER_MERCHANT_ID", "2209595647")
 SECRET_KEY = os.getenv("PAYEER_SECRET_KEY", "123")
-WEBHOOK_URL = os.getenv("WEBHOOK_URL")  # Your Render or domain URL
+WEBHOOK_URL = os.getenv("WEBHOOK_URL")
 
-bot = Bot(token=TOKEN)
 app = Flask(__name__)
-dispatcher = Dispatcher(bot=bot, update_queue=None, workers=4)
+application = Application.builder().token(TOKEN).build()
 
 PAYMENTS_FILE = "payments.json"
 
-# Utilities
 def has_paid(user_id, imei):
     if not os.path.exists(PAYMENTS_FILE):
         return False
@@ -57,21 +53,20 @@ def generate_payeer_link(user_id, imei):
         f"&lang=en"
     )
 
-# Handlers
-async def start(update: Update, context: CallbackContext):
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [["🔍 Check IMEI"], ["❓ Help"]]
     await update.message.reply_text(
         f"👋 Welcome {update.effective_user.first_name}!\nI can check your IMEI info.\nPlease choose an option below:",
         reply_markup={"keyboard": keyboard, "resize_keyboard": True}
     )
 
-async def help_command(update: Update, context: CallbackContext):
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "❓ *Help Menu*\n\nEach IMEI check costs $0.32. You'll be provided a Payeer payment link.\nUse /check <IMEI> to begin.",
         parse_mode="Markdown"
     )
 
-async def check_imei(update: Update, context: CallbackContext):
+async def check_imei(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
         await update.message.reply_text("⚠️ Please enter your 15-digit IMEI.")
         return
@@ -109,16 +104,15 @@ async def check_imei(update: Update, context: CallbackContext):
     except Exception as e:
         await update.message.reply_text(f"⚠️ An error occurred: {str(e)}")
 
-# Dispatcher setup
-dispatcher.add_handler(CommandHandler("start", start))
-dispatcher.add_handler(CommandHandler("check", check_imei))
-dispatcher.add_handler(CommandHandler("help", help_command))
+application.add_handler(CommandHandler("start", start))
+application.add_handler(CommandHandler("check", check_imei))
+application.add_handler(CommandHandler("help", help_command))
 
 @app.route(f"/{TOKEN}", methods=["POST"])
 def webhook():
     if request.method == "POST":
-        update = Update.de_json(request.get_json(force=True), bot)
-        dispatcher.process_update(update)
+        update = Update.de_json(request.get_json(force=True), application.bot)
+        application.process_update(update)
         return "OK"
     return abort(403)
 
@@ -128,7 +122,7 @@ def home():
 
 if __name__ == "__main__":
     if WEBHOOK_URL:
-        bot.delete_webhook()
-        bot.set_webhook(url=f"{WEBHOOK_URL}/{TOKEN}")
+        application.bot.delete_webhook()
+        application.bot.set_webhook(url=f"{WEBHOOK_URL}/{TOKEN}")
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
