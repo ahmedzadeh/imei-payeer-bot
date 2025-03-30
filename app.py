@@ -1,98 +1,135 @@
-from flask import Flask, request
+import requests
 import hashlib
 import json
 import os
-import requests
-from telegram import Bot
+import base64
+from flask import Flask, request, abort
+from telegram import Bot, Update
+from telegram.ext import CommandHandler, Dispatcher, CallbackContext
+from telegram.ext import MessageHandler, filters
 
-app = Flask(__name__)
-
-MERCHANT_ID = "2209595647"
-SECRET_KEY = "123"
-BOT_TOKEN = "8018027330:AAGbqSQ5wQvLj2rPGXQ_MOWU3I8z7iUpjPw"
-bot = Bot(token=BOT_TOKEN)
-
-API_KEY = "PKZ-HK5-K6H-MRF-AXE-5VZ-LCN-W6L"
+# Environment variables (for deployment)
+TOKEN = os.getenv("BOT_TOKEN", "8018027330:AAGbqSQ5wQvLj2rPGXQ_MOWU3I8z7iUpjPw")
+API_KEY = os.getenv("PROIMEI_API_KEY", "PKZ-HK5-K6H-MRF-AXE-5VZ-LCN-W6L")
 API_URL = "https://proimei.info/en/prepaid/api"
+PAYEER_MERCHANT_ID = os.getenv("PAYEER_MERCHANT_ID", "2209595647")
+SECRET_KEY = os.getenv("PAYEER_SECRET_KEY", "123")
+WEBHOOK_URL = os.getenv("WEBHOOK_URL")  # Your Render or domain URL
+
+bot = Bot(token=TOKEN)
+app = Flask(__name__)
+dispatcher = Dispatcher(bot=bot, update_queue=None, workers=4)
 
 PAYMENTS_FILE = "payments.json"
 
-def save_payment(user_id, imei):
+# Utilities
+def has_paid(user_id, imei):
     if not os.path.exists(PAYMENTS_FILE):
-        with open(PAYMENTS_FILE, "w") as f:
-            json.dump({}, f)
-
+        return False
     with open(PAYMENTS_FILE, "r") as f:
-        data = json.load(f)
+        payments = json.load(f)
+    return str(user_id) in payments and imei in payments[str(user_id)]
 
-    data.setdefault(str(user_id), []).append(imei)
+def generate_payeer_link(user_id, imei):
+    m_orderid = f"tg{user_id}_imei{imei}"
+    m_amount = "0.32"
+    m_curr = "USD"
+    plain_desc = "IMEI Check"
+    m_desc = base64.b64encode(plain_desc.encode("utf-8", errors="ignore")).decode()
 
-    with open(PAYMENTS_FILE, "w") as f:
-        json.dump(data, f)
-
-@app.route('/payment', methods=['POST'])
-def payment():
-    data = request.form
-
-    required_fields = ['m_operation_id', 'm_sign', 'm_orderid', 'm_amount', 'm_curr', 'm_desc', 'm_status']
-    if not all(field in data for field in required_fields):
-        return "Missing fields", 400
-
-    # Step 1: Verify signature
     sign_string = ":".join([
-        data['m_operation_id'],
-        data['m_operation_ps'],
-        data['m_operation_date'],
-        data['m_operation_pay_date'],
-        data['m_shop'],
-        data['m_orderid'],
-        data['m_amount'],
-        data['m_curr'],
-        data['m_desc'],
-        data['m_status'],
+        PAYEER_MERCHANT_ID,
+        m_orderid,
+        m_amount,
+        m_curr,
+        m_desc,
         SECRET_KEY
     ])
-    sign_hash = hashlib.sha256(sign_string.encode()).hexdigest().upper()
+    m_sign = hashlib.sha256(sign_string.encode()).hexdigest().upper()
 
-    if sign_hash != data['m_sign']:
-        return "Invalid signature", 400
+    return (
+        f"https://payeer.com/merchant/?m_shop={PAYEER_MERCHANT_ID}"
+        f"&m_orderid={m_orderid}"
+        f"&m_amount={m_amount}"
+        f"&m_curr={m_curr}"
+        f"&m_desc={m_desc}"
+        f"&m_sign={m_sign}"
+        f"&lang=en"
+    )
 
-    if data['m_status'] != "success":
-        return "Payment not successful", 400
+# Handlers
+async def start(update: Update, context: CallbackContext):
+    keyboard = [["🔍 Check IMEI"], ["❓ Help"]]
+    await update.message.reply_text(
+        f"👋 Welcome {update.effective_user.first_name}!
+I can check your IMEI info.\nPlease choose an option below:",
+        reply_markup={"keyboard": keyboard, "resize_keyboard": True}
+    )
 
-    # Step 2: Extract info from m_orderid
+async def help_command(update: Update, context: CallbackContext):
+    await update.message.reply_text(
+        "❓ *Help Menu*\n\nEach IMEI check costs $0.32. You'll be provided a Payeer payment link.\nUse /check <IMEI> to begin.",
+        parse_mode="Markdown"
+    )
+
+async def check_imei(update: Update, context: CallbackContext):
+    if not context.args:
+        await update.message.reply_text("⚠️ Please enter your 15-digit IMEI.")
+        return
+
+    imei = context.args[0]
+    user_id = update.effective_user.id
+
+    if not has_paid(user_id, imei):
+        link = generate_payeer_link(user_id, imei)
+        await update.message.reply_text(
+            f"🔐 This IMEI check costs $0.32\n💳 Please pay using the link below to continue:\n{link}"
+        )
+        return
+
+    api_url = f"{API_URL}?api_key={API_KEY}&checker=simlock2&number={imei}"
     try:
-        order_parts = data['m_orderid'].split("_imei")
-        user_id = int(order_parts[0].replace("tg", ""))
-        imei = order_parts[1]
-    except:
-        return "Invalid order format", 400
-
-    # Step 3: Save payment
-    save_payment(user_id, imei)
-
-    # Step 4: Send IMEI result
-    imei_api_url = f"{API_URL}?api_key={API_KEY}&checker=simlock2&number={imei}"
-    try:
-        response = requests.get(imei_api_url)
+        response = requests.get(api_url)
         if response.status_code == 200:
-            imei_data = response.json()
-            message = (
+            data = response.json()
+            msg = (
                 f"📱 *IMEI Information:*\n\n"
-                f"🔹 *IMEI 1:* {imei_data.get('IMEI', 'No data')}\n"
-                f"🔹 *IMEI 2:* {imei_data.get('IMEI2', 'No data')}\n"
-                f"🔹 *MEID:* {imei_data.get('MEID', 'No data')}\n"
-                f"🔹 *Serial Number:* {imei_data.get('Serial Number', 'No data')}\n"
-                f"🔹 *Description:* {imei_data.get('Description', 'No data')}\n"
-                f"🔹 *Date of Purchase:* {imei_data.get('Date of purchase', 'No data')}\n"
-                f"🔹 *Repairs & Service Coverage:* {imei_data.get('Repairs & Service Coverage', 'No data')}\n"
-                f"🔹 *Is Replaced:* {imei_data.get('is replaced', 'No data')}\n"
-                f"🔹 *SIM Lock:* {imei_data.get('SIM Lock', 'No data')}"
+                f"🔹 *IMEI 1:* {data.get('IMEI', 'N/A')}\n"
+                f"🔹 *IMEI 2:* {data.get('IMEI2', 'N/A')}\n"
+                f"🔹 *MEID:* {data.get('MEID', 'N/A')}\n"
+                f"🔹 *Serial Number:* {data.get('Serial Number', 'N/A')}\n"
+                f"🔹 *Description:* {data.get('Description', 'N/A')}\n"
+                f"🔹 *Date of Purchase:* {data.get('Date of purchase', 'N/A')}\n"
+                f"🔹 *Repairs & Service Coverage:* {data.get('Repairs & Service Coverage', 'N/A')}\n"
+                f"🔹 *Is Replaced:* {data.get('is replaced', 'N/A')}\n"
+                f"🔹 *SIM Lock:* {data.get('SIM Lock', 'N/A')}"
             )
-            bot.send_message(chat_id=user_id, text=message, parse_mode="Markdown")
+            await update.message.reply_text(msg, parse_mode="Markdown")
         else:
-            bot.send_message(chat_id=user_id, text="❌ Payment was received, but IMEI check failed.")
+            await update.message.reply_text("❌ Error checking the IMEI.")
     except Exception as e:
-        bot.send_message(chat_id=user_id, text=f"⚠️ Error after payment: {str(e)}")
+        await update.message.reply_text(f"⚠️ An error occurred: {str(e)}")
 
-    return "OK"
+# Dispatcher setup
+dispatcher.add_handler(CommandHandler("start", start))
+dispatcher.add_handler(CommandHandler("check", check_imei))
+dispatcher.add_handler(CommandHandler("help", help_command))
+
+@app.route(f"/{TOKEN}", methods=["POST"])
+def webhook():
+    if request.method == "POST":
+        update = Update.de_json(request.get_json(force=True), bot)
+        dispatcher.process_update(update)
+        return "OK"
+    return abort(403)
+
+@app.route("/")
+def home():
+    return "Bot is running."
+
+if __name__ == "__main__":
+    if WEBHOOK_URL:
+        bot.delete_webhook()
+        bot.set_webhook(url=f"{WEBHOOK_URL}/{TOKEN}")
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)
