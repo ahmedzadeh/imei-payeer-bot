@@ -123,8 +123,9 @@ async def check_imei(update: Update, context: CallbackContext):
     except Exception as e:
         await update.message.reply_text(f"⚠️ An error occurred: {str(e)}")
 
-# Initialize application and register handlers once
+# Initialize application
 application = Application.builder().token(TOKEN).build()
+
 application.add_handler(CommandHandler("start", start))
 application.add_handler(CommandHandler("check", check_imei))
 application.add_handler(CommandHandler("help", help_command))
@@ -132,9 +133,8 @@ application.add_handler(CommandHandler("help", help_command))
 # Flask routes
 @app.route(f"/{TOKEN}", methods=["POST"])
 def webhook():
-    print("✅ Webhook triggered")
     update = Update.de_json(request.get_json(force=True), bot)
-    asyncio.run(application.process_update(update))
+    asyncio.create_task(application.process_update(update))
     return "OK"
 
 @app.route("/")
