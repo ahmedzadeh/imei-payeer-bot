@@ -1,91 +1,98 @@
-from flask import Flask, request, abort
+from flask import Flask, request
 import hashlib
+import json
 import os
 import requests
-import json
+from telegram import Bot
 
 app = Flask(__name__)
 
-# Payeer credentials
-MERCHANT_ID = os.getenv("PAYEER_MERCHANT_ID", "YOUR_MERCHANT_ID")
-SECRET_KEY = os.getenv("PAYEER_SECRET_KEY", "YOUR_SECRET_KEY")
-
-# Telegram Bot
+MERCHANT_ID = "2209595647"
+SECRET_KEY = "123"
 BOT_TOKEN = "8018027330:AAGbqSQ5wQvLj2rPGXQ_MOWU3I8z7iUpjPw"
-TELEGRAM_API = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+bot = Bot(token=BOT_TOKEN)
+
+API_KEY = "PKZ-HK5-K6H-MRF-AXE-5VZ-LCN-W6L"
+API_URL = "https://proimei.info/en/prepaid/api"
 
 PAYMENTS_FILE = "payments.json"
 
-# Load or initialize payments database
-def load_payments():
+def save_payment(user_id, imei):
     if not os.path.exists(PAYMENTS_FILE):
-        return {}
+        with open(PAYMENTS_FILE, "w") as f:
+            json.dump({}, f)
+
     with open(PAYMENTS_FILE, "r") as f:
-        return json.load(f)
+        data = json.load(f)
 
-def save_payment(tg_id, imei):
-    data = load_payments()
-    data[tg_id] = data.get(tg_id, [])
-    if imei not in data[tg_id]:
-        data[tg_id].append(imei)
+    data.setdefault(str(user_id), []).append(imei)
+
     with open(PAYMENTS_FILE, "w") as f:
-        json.dump(data, f, indent=2)
+        json.dump(data, f)
 
-@app.route("/payeer", methods=["POST"])
-def payeer_webhook():
-    data = request.form.to_dict()
-    print("Received IPN:", data)
+@app.route('/payment', methods=['POST'])
+def payment():
+    data = request.form
 
-    if not all(k in data for k in ("m_operation_id", "m_sign")):
+    required_fields = ['m_operation_id', 'm_sign', 'm_orderid', 'm_amount', 'm_curr', 'm_desc', 'm_status']
+    if not all(field in data for field in required_fields):
         return "Missing fields", 400
 
+    # Step 1: Verify signature
     sign_string = ":".join([
-        data.get("m_operation_id", ""),
-        data.get("m_operation_ps", ""),
-        data.get("m_operation_date", ""),
-        data.get("m_operation_pay_date", ""),
-        data.get("m_shop", ""),
-        data.get("m_orderid", ""),
-        data.get("m_amount", ""),
-        data.get("m_curr", ""),
-        data.get("m_desc", ""),
-        data.get("m_status", ""),
+        data['m_operation_id'],
+        data['m_operation_ps'],
+        data['m_operation_date'],
+        data['m_operation_pay_date'],
+        data['m_shop'],
+        data['m_orderid'],
+        data['m_amount'],
+        data['m_curr'],
+        data['m_desc'],
+        data['m_status'],
         SECRET_KEY
     ])
+    sign_hash = hashlib.sha256(sign_string.encode()).hexdigest().upper()
 
-    local_sign = hashlib.sha256(sign_string.encode("utf-8")).hexdigest().upper()
-    if local_sign != data.get("m_sign"):
-        return "Invalid signature", 403
+    if sign_hash != data['m_sign']:
+        return "Invalid signature", 400
 
-    if data.get("m_status") == "success":
-        order_id = data.get("m_orderid")
-        print(f"✅ Payment confirmed for order ID: {order_id}")
+    if data['m_status'] != "success":
+        return "Payment not successful", 400
 
-        # Extract Telegram user_id from order_id (expected format: tg123456789_imei123456789012345)
-        if order_id.startswith("tg"):
-            try:
-                tg_id = order_id.split("_")[0][2:]
-                imei = order_id.split("_imei")[-1]
+    # Step 2: Extract info from m_orderid
+    try:
+        order_parts = data['m_orderid'].split("_imei")
+        user_id = int(order_parts[0].replace("tg", ""))
+        imei = order_parts[1]
+    except:
+        return "Invalid order format", 400
 
-                # Save payment info
-                save_payment(tg_id, imei)
+    # Step 3: Save payment
+    save_payment(user_id, imei)
 
-                # Notify user
-                message = f"✅ Payment received for IMEI: `{imei}`\nYou can now check your result."
-                payload = {
-                    "chat_id": tg_id,
-                    "text": message,
-                    "parse_mode": "Markdown"
-                }
-                requests.post(TELEGRAM_API, data=payload)
-            except Exception as e:
-                print("Error parsing order ID or notifying user:", e)
+    # Step 4: Send IMEI result
+    imei_api_url = f"{API_URL}?api_key={API_KEY}&checker=simlock2&number={imei}"
+    try:
+        response = requests.get(imei_api_url)
+        if response.status_code == 200:
+            imei_data = response.json()
+            message = (
+                f"📱 *IMEI Information:*\n\n"
+                f"🔹 *IMEI 1:* {imei_data.get('IMEI', 'No data')}\n"
+                f"🔹 *IMEI 2:* {imei_data.get('IMEI2', 'No data')}\n"
+                f"🔹 *MEID:* {imei_data.get('MEID', 'No data')}\n"
+                f"🔹 *Serial Number:* {imei_data.get('Serial Number', 'No data')}\n"
+                f"🔹 *Description:* {imei_data.get('Description', 'No data')}\n"
+                f"🔹 *Date of Purchase:* {imei_data.get('Date of purchase', 'No data')}\n"
+                f"🔹 *Repairs & Service Coverage:* {imei_data.get('Repairs & Service Coverage', 'No data')}\n"
+                f"🔹 *Is Replaced:* {imei_data.get('is replaced', 'No data')}\n"
+                f"🔹 *SIM Lock:* {imei_data.get('SIM Lock', 'No data')}"
+            )
+            bot.send_message(chat_id=user_id, text=message, parse_mode="Markdown")
+        else:
+            bot.send_message(chat_id=user_id, text="❌ Payment was received, but IMEI check failed.")
+    except Exception as e:
+        bot.send_message(chat_id=user_id, text=f"⚠️ Error after payment: {str(e)}")
 
-        return data.get("m_orderid", ""), 200
-
-    else:
-        print("❌ Payment failed or not complete.")
-        return "Payment failed", 400
-
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000)
+    return "OK"
