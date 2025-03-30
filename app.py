@@ -131,9 +131,13 @@ application.add_handler(CommandHandler("help", help_command))
 @app.route(f"/{TOKEN}", methods=["POST"])
 def webhook():
     update = Update.de_json(request.get_json(force=True), application.bot)
-    asyncio.ensure_future(application.initialize())
-    asyncio.ensure_future(application.process_update(update))
-    return "OK"
+
+    async def process_update():
+        if not application.running:
+            await application.initialize()
+        await application.process_update(update)
+
+    return asyncio.run(process_update())
 
 @app.route("/")
 def home():
