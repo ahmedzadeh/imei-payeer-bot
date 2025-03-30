@@ -18,12 +18,6 @@ bot = Bot(token=TOKEN)
 app = Flask(__name__)
 PAYMENTS_FILE = "payments.json"
 
-# Initialize application and register handlers once
-application = Application.builder().token(TOKEN).build()
-application.add_handler(CommandHandler("start", start))
-application.add_handler(CommandHandler("check", check_imei))
-application.add_handler(CommandHandler("help", help_command))
-
 # Utilities
 def has_paid(user_id, imei):
     if not os.path.exists(PAYMENTS_FILE):
@@ -127,6 +121,12 @@ async def check_imei(update: Update, context: CallbackContext):
             await update.message.reply_text("❌ Error checking the IMEI.")
     except Exception as e:
         await update.message.reply_text(f"⚠️ An error occurred: {str(e)}")
+
+# Initialize application and register handlers once
+application = Application.builder().token(TOKEN).build()
+application.add_handler(CommandHandler("start", start))
+application.add_handler(CommandHandler("check", check_imei))
+application.add_handler(CommandHandler("help", help_command))
 
 # Flask routes
 @app.route(f"/{TOKEN}", methods=["POST"])
