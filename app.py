@@ -1,40 +1,35 @@
-import requests
-import hashlib
-import json
 import os
+import json
 import base64
-from flask import Flask, request, abort
-from telegram import Bot, Update, ReplyKeyboardMarkup, KeyboardButton
-from telegram.ext import Application, CommandHandler, MessageHandler, CallbackContext, filters
+import hashlib
+import requests
+from flask import Flask, request
+from telegram import Update, Bot, ReplyKeyboardMarkup, KeyboardButton
+from telegram.ext import Application, CommandHandler, ContextTypes
 
-# Configuration
 TOKEN = os.getenv("BOT_TOKEN", "8018027330:AAGbqSQ5wQvLj2rPGXQ_MOWU3I8z7iUpjPw")
 API_KEY = os.getenv("PROIMEI_API_KEY", "PKZ-HK5-K6H-MRF-AXE-5VZ-LCN-W6L")
 API_URL = "https://proimei.info/en/prepaid/api"
 PAYEER_MERCHANT_ID = os.getenv("PAYEER_MERCHANT_ID", "2209595647")
 SECRET_KEY = os.getenv("PAYEER_SECRET_KEY", "123")
-WEBHOOK_URL = os.getenv("WEBHOOK_URL")
 PAYMENTS_FILE = "payments.json"
 
-# Flask setup
-app = Flask(__name__)
 bot = Bot(token=TOKEN)
+app = Flask(__name__)
 application = Application.builder().token(TOKEN).build()
 
-# Utilities
 def has_paid(user_id, imei):
     if not os.path.exists(PAYMENTS_FILE):
         return False
     with open(PAYMENTS_FILE, "r") as f:
-        payments = json.load(f)
-    return str(user_id) in payments and imei in payments[str(user_id)]
+        data = json.load(f)
+    return str(user_id) in data and imei in data[str(user_id)]
 
-def generate_payeer_link(user_id, imei):
+def generate_payment_link(user_id, imei):
     m_orderid = f"tg{user_id}_imei{imei}"
     m_amount = "0.32"
     m_curr = "USD"
-    plain_desc = "IMEI Check"
-    m_desc = base64.b64encode(plain_desc.encode("utf-8", errors="ignore")).decode()
+    m_desc = base64.b64encode("IMEI_Check".encode()).decode()
 
     sign_string = ":".join([
         PAYEER_MERCHANT_ID,
@@ -48,72 +43,51 @@ def generate_payeer_link(user_id, imei):
 
     return (
         f"https://payeer.com/merchant/?m_shop={PAYEER_MERCHANT_ID}"
-        f"&m_orderid={m_orderid}"
-        f"&m_amount={m_amount}"
-        f"&m_curr={m_curr}"
-        f"&m_desc={m_desc}"
-        f"&m_sign={m_sign}"
-        f"&lang=en"
+        f"&m_orderid={m_orderid}&m_amount={m_amount}&m_curr={m_curr}"
+        f"&m_desc={m_desc}&m_sign={m_sign}&lang=en"
     )
 
-# Handlers
-async def start(update: Update, context: CallbackContext):
-    keyboard = [[KeyboardButton("🔍 Check IMEI")], [KeyboardButton("❓ Help")]]
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    keyboard = ReplyKeyboardMarkup(
+        [[KeyboardButton("🔍 Check IMEI")]],
+        resize_keyboard=True
+    )
     await update.message.reply_text(
         f"👋 Welcome {update.effective_user.first_name}!\nI can check your IMEI info.\nPlease choose an option below:",
-        reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+        reply_markup=keyboard
     )
 
-async def help_command(update: Update, context: CallbackContext):
-    await update.message.reply_text(
-        "❓ *Help Menu*\n\nEach IMEI check costs $0.32. You'll be provided a Payeer payment link.\nUse /check <IMEI> to begin.",
-        parse_mode="Markdown"
-    )
-
-async def check_imei(update: Update, context: CallbackContext):
+async def check(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
-        await update.message.reply_text("⚠️ Please enter your 15-digit IMEI.")
+        await update.message.reply_text("📌 Please enter your IMEI like this: /check 123456789012345")
         return
 
     imei = context.args[0]
     user_id = update.effective_user.id
 
     if not has_paid(user_id, imei):
-        link = generate_payeer_link(user_id, imei)
-        await update.message.reply_text(
-            f"🔐 This IMEI check costs $0.32\n💳 Please pay using the link below to continue:\n{link}"
-        )
+        link = generate_payment_link(user_id, imei)
+        await update.message.reply_text(f"💳 This IMEI check costs $0.32\nPlease pay using the link below:\n{link}")
         return
 
     api_url = f"{API_URL}?api_key={API_KEY}&checker=simlock2&number={imei}"
-    try:
-        response = requests.get(api_url)
-        if response.status_code == 200:
-            data = response.json()
-            msg = (
-                f"📱 *IMEI Information:*\n\n"
-                f"🔹 *IMEI 1:* {data.get('IMEI', 'N/A')}\n"
-                f"🔹 *IMEI 2:* {data.get('IMEI2', 'N/A')}\n"
-                f"🔹 *MEID:* {data.get('MEID', 'N/A')}\n"
-                f"🔹 *Serial Number:* {data.get('Serial Number', 'N/A')}\n"
-                f"🔹 *Description:* {data.get('Description', 'N/A')}\n"
-                f"🔹 *Date of Purchase:* {data.get('Date of purchase', 'N/A')}\n"
-                f"🔹 *Repairs & Service Coverage:* {data.get('Repairs & Service Coverage', 'N/A')}\n"
-                f"🔹 *Is Replaced:* {data.get('is replaced', 'N/A')}\n"
-                f"🔹 *SIM Lock:* {data.get('SIM Lock', 'N/A')}"
-            )
-            await update.message.reply_text(msg, parse_mode="Markdown")
-        else:
-            await update.message.reply_text("❌ Error checking the IMEI.")
-    except Exception as e:
-        await update.message.reply_text(f"⚠️ An error occurred: {str(e)}")
+    response = requests.get(api_url)
+    if response.ok:
+        data = response.json()
+        msg = (
+            f"📱 *IMEI Info:*\n"
+            f"🔹 IMEI: {data.get('IMEI', 'N/A')}\n"
+            f"🔹 Description: {data.get('Description', 'N/A')}\n"
+            f"🔹 Purchase Date: {data.get('Date of purchase', 'N/A')}\n"
+            f"🔹 SIM Lock: {data.get('SIM Lock', 'N/A')}"
+        )
+        await update.message.reply_text(msg, parse_mode="Markdown")
+    else:
+        await update.message.reply_text("❌ Failed to get IMEI data.")
 
-# Register handlers
 application.add_handler(CommandHandler("start", start))
-application.add_handler(CommandHandler("check", check_imei))
-application.add_handler(CommandHandler("help", help_command))
+application.add_handler(CommandHandler("check", check))
 
-# Flask webhook route
 @app.route(f"/{TOKEN}", methods=["POST"])
 def webhook():
     update = Update.de_json(request.get_json(force=True), bot)
@@ -121,12 +95,9 @@ def webhook():
     return "OK"
 
 @app.route("/")
-def home():
+def index():
     return "Bot is running."
 
 if __name__ == "__main__":
-    if WEBHOOK_URL:
-        bot.delete_webhook()
-        bot.set_webhook(url=f"{WEBHOOK_URL}/{TOKEN}")
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port)
+    # If you want to test locally
+    application.run_polling()
