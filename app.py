@@ -129,15 +129,14 @@ application.add_handler(CommandHandler("start", start))
 application.add_handler(CommandHandler("check", check_imei))
 application.add_handler(CommandHandler("help", help_command))
 
-# Flask routes
 @app.route(f"/{TOKEN}", methods=["POST"])
 def webhook():
     update = Update.de_json(request.get_json(force=True), bot)
 
     async def handle():
-        await application.initialize()
+        if not application.running:
+            await application.initialize()
         await application.process_update(update)
-        await application.shutdown()
 
     asyncio.run(handle())
     return "OK"
