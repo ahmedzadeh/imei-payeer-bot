@@ -131,25 +131,22 @@ application.add_handler(CommandHandler("help", help_command))
 @app.route(f"/{TOKEN}", methods=["POST"])
 def webhook():
     try:
-        print("🔔 Incoming Telegram update received")
         json_data = request.get_json(force=True)
-        print("📩 Payload:", json_data)
-
         update = Update.de_json(json_data, application.bot)
 
-        async def process_update():
+        async def process():
             if not application.running:
                 await application.initialize()
             await application.process_update(update)
 
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        result = loop.run_until_complete(process_update())
-        return "OK"
+        return asyncio.run(process())
 
     except Exception as e:
-        print("❌ ERROR IN WEBHOOK:", e)
+        import traceback
+        print("❌ ERROR in webhook:")
+        traceback.print_exc()
         return "FAIL", 500
+
 
 
 
