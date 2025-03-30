@@ -4,7 +4,7 @@ import json
 import os
 import base64
 from flask import Flask, request, abort
-from telegram import Bot, Update, ReplyKeyboardMarkup, KeyboardButton
+from telegram import Update, ReplyKeyboardMarkup, KeyboardButton
 from telegram.ext import Application, CommandHandler, CallbackContext, MessageHandler, filters
 import asyncio
 
@@ -15,7 +15,6 @@ PAYEER_MERCHANT_ID = os.getenv("PAYEER_MERCHANT_ID", "2209595647")
 SECRET_KEY = os.getenv("PAYEER_SECRET_KEY", "123")
 WEBHOOK_URL = os.getenv("WEBHOOK_URL", "https://imei-payeer-bot.onrender.com")
 
-bot = Bot(token=TOKEN)
 app = Flask(__name__)
 PAYMENTS_FILE = "payments.json"
 
@@ -131,7 +130,7 @@ application.add_handler(CommandHandler("help", help_command))
 
 @app.route(f"/{TOKEN}", methods=["POST"])
 def webhook():
-    update = Update.de_json(request.get_json(force=True), bot)
+    update = Update.de_json(request.get_json(force=True), application.bot)
 
     async def handle():
         if not application.running:
@@ -145,11 +144,7 @@ def webhook():
 def home():
     return "Bot is running."
 
-async def on_startup(application):
-    await bot.set_webhook(url=f"{WEBHOOK_URL}/{TOKEN}")
-
-application.post_init = on_startup
-
 if __name__ == "__main__":
+    asyncio.run(application.bot.set_webhook(url=f"{WEBHOOK_URL}/{TOKEN}"))
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
