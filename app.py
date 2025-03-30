@@ -17,7 +17,6 @@ WEBHOOK_URL = os.getenv("WEBHOOK_URL", "https://imei-payeer-bot.onrender.com")
 bot = Bot(token=TOKEN)
 app = Flask(__name__)
 PAYMENTS_FILE = "payments.json"
-application = Application.builder().token(TOKEN).build()
 
 # Utilities
 def has_paid(user_id, imei):
@@ -127,8 +126,66 @@ async def check_imei(update: Update, context: CallbackContext):
 @app.route(f"/{TOKEN}", methods=["POST"])
 def webhook():
     update = Update.de_json(request.get_json(force=True), bot)
-    application.update_persistence()  # dummy workaround for render restart
+    application = Application.builder().token(TOKEN).build()
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("check", check_imei))
+    application.add_handler(CommandHandler("help", help_command))
     application.process_update(update)
+    return "OK"
+
+@app.route("/payeer-status", methods=["POST"])
+def payeer_status():
+    m_orderid = request.form.get("m_orderid")
+    m_sign = request.form.get("m_sign")
+    m_amount = request.form.get("m_amount")
+    m_curr = request.form.get("m_curr")
+
+    if not m_orderid or "_imei" not in m_orderid:
+        return "Invalid order ID", 400
+
+    try:
+        user_part, imei = m_orderid.split("_imei")
+        user_id = user_part.replace("tg", "")
+    except Exception as e:
+        return f"Error parsing order ID: {e}", 400
+
+    m_desc = base64.b64encode("IMEI Check".encode()).decode()
+    sign_string = ":".join([
+        PAYEER_MERCHANT_ID,
+        m_orderid,
+        m_amount,
+        m_curr,
+        m_desc,
+        SECRET_KEY
+    ])
+    expected_sign = hashlib.sha256(sign_string.encode()).hexdigest().upper()
+
+    if m_sign != expected_sign:
+        return "Invalid signature", 403
+
+    save_payment(user_id, imei)
+
+    try:
+        bot.send_message(
+            chat_id=user_id,
+            text=f"✅ Payment received for IMEI: {imei}\nI will now check the IMEI for you..."
+        )
+        fake_update = Update.de_json({
+            "update_id": 10000,
+            "message": {
+                "message_id": 1,
+                "from": {"id": int(user_id), "first_name": "User", "is_bot": False},
+                "chat": {"id": int(user_id), "type": "private"},
+                "date": 0,
+                "text": f"/check {imei}"
+            }
+        }, bot)
+        application = Application.builder().token(TOKEN).build()
+        application.add_handler(CommandHandler("check", check_imei))
+        application.process_update(fake_update)
+    except Exception as e:
+        return f"Bot error: {e}", 500
+
     return "OK"
 
 @app.route("/")
@@ -136,9 +193,6 @@ def home():
     return "Bot is running."
 
 if __name__ == "__main__":
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("check", check_imei))
-    application.add_handler(CommandHandler("help", help_command))
     bot.delete_webhook()
     bot.set_webhook(url=f"{WEBHOOK_URL}/{TOKEN}")
     port = int(os.environ.get("PORT", 5000))
