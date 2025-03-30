@@ -6,6 +6,7 @@ import base64
 from flask import Flask, request, abort
 from telegram import Bot, Update, ReplyKeyboardMarkup, KeyboardButton
 from telegram.ext import Application, CommandHandler, CallbackContext, MessageHandler, filters
+import asyncio
 
 TOKEN = os.getenv("BOT_TOKEN", "8018027330:AAGbqSQ5wQvLj2rPGXQ_MOWU3I8z7iUpjPw")
 API_KEY = os.getenv("PROIMEI_API_KEY", "PKZ-HK5-K6H-MRF-AXE-5VZ-LCN-W6L")
@@ -131,8 +132,9 @@ application.add_handler(CommandHandler("help", help_command))
 # Flask routes
 @app.route(f"/{TOKEN}", methods=["POST"])
 def webhook():
+    print("✅ Webhook triggered")
     update = Update.de_json(request.get_json(force=True), bot)
-    application.update_queue.put_nowait(update)
+    asyncio.run(application.process_update(update))
     return "OK"
 
 @app.route("/")
