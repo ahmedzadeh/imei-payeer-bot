@@ -137,7 +137,14 @@ def webhook():
             await application.initialize()
         await application.process_update(update)
 
-    return asyncio.run(process_update())
+    try:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        return loop.run_until_complete(process_update())
+    except Exception as e:
+        print("ERROR IN WEBHOOK:", e)
+        return "FAIL", 500
+
 
 @app.route("/")
 def home():
