@@ -132,7 +132,7 @@ application.add_handler(CommandHandler("help", help_command))
 @app.route(f"/{TOKEN}", methods=["POST"])
 def webhook():
     update = Update.de_json(request.get_json(force=True), bot)
-    application.process_update(update)
+    application.update_queue.put_nowait(update)
     return "OK"
 
 @app.route("/")
