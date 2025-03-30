@@ -61,8 +61,7 @@ def generate_payeer_link(user_id, imei):
 async def start(update: Update, context: CallbackContext):
     keyboard = [["🔍 Check IMEI"], ["❓ Help"]]
     await update.message.reply_text(
-        f"👋 Welcome {update.effective_user.first_name}!
-I can check your IMEI info.\nPlease choose an option below:",
+        f"👋 Welcome {update.effective_user.first_name}!\nI can check your IMEI info.\nPlease choose an option below:",
         reply_markup={"keyboard": keyboard, "resize_keyboard": True}
     )
 
