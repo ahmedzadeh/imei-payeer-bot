@@ -139,13 +139,15 @@ def webhook():
                 await application.initialize()
             await application.process_update(update)
 
-        return asyncio.run(process())
+        asyncio.run(process())
+        return "OK", 200
 
     except Exception as e:
         import traceback
         print("❌ ERROR in webhook:")
         traceback.print_exc()
         return "FAIL", 500
+
 
 
 
