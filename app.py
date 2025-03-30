@@ -4,26 +4,28 @@ import json
 import os
 import base64
 from flask import Flask, request, abort
-from telegram import Bot, Update
-from telegram.ext import CommandHandler, CallbackContext, Application, MessageHandler, filters
+from telegram import Bot, Update, ReplyKeyboardMarkup, KeyboardButton
+from telegram.ext import Application, CommandHandler, MessageHandler, CallbackContext, filters
 
-# Environment variables (for deployment)
+# Configuration
 TOKEN = os.getenv("BOT_TOKEN", "8018027330:AAGbqSQ5wQvLj2rPGXQ_MOWU3I8z7iUpjPw")
 API_KEY = os.getenv("PROIMEI_API_KEY", "PKZ-HK5-K6H-MRF-AXE-5VZ-LCN-W6L")
 API_URL = "https://proimei.info/en/prepaid/api"
 PAYEER_MERCHANT_ID = os.getenv("PAYEER_MERCHANT_ID", "2209595647")
 SECRET_KEY = os.getenv("PAYEER_SECRET_KEY", "123")
-WEBHOOK_URL = os.getenv("WEBHOOK_URL")  # Your Render or domain URL
+WEBHOOK_URL = os.getenv("WEBHOOK_URL")
+PAYMENTS_FILE = "payments.json"
 
-bot = Bot(token=TOKEN)
+# Flask setup
 app = Flask(__name__)
-payments_file = "payments.json"
+bot = Bot(token=TOKEN)
+application = Application.builder().token(TOKEN).build()
 
 # Utilities
 def has_paid(user_id, imei):
-    if not os.path.exists(payments_file):
+    if not os.path.exists(PAYMENTS_FILE):
         return False
-    with open(payments_file, "r") as f:
+    with open(PAYMENTS_FILE, "r") as f:
         payments = json.load(f)
     return str(user_id) in payments and imei in payments[str(user_id)]
 
@@ -56,10 +58,10 @@ def generate_payeer_link(user_id, imei):
 
 # Handlers
 async def start(update: Update, context: CallbackContext):
-    keyboard = [["🔍 Check IMEI"], ["❓ Help"]]
+    keyboard = [[KeyboardButton("🔍 Check IMEI")], [KeyboardButton("❓ Help")]]
     await update.message.reply_text(
         f"👋 Welcome {update.effective_user.first_name}!\nI can check your IMEI info.\nPlease choose an option below:",
-        reply_markup={"keyboard": keyboard, "resize_keyboard": True}
+        reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
     )
 
 async def help_command(update: Update, context: CallbackContext):
@@ -106,21 +108,16 @@ async def check_imei(update: Update, context: CallbackContext):
     except Exception as e:
         await update.message.reply_text(f"⚠️ An error occurred: {str(e)}")
 
-# Dispatcher setup
-application = Application.builder().token(TOKEN).build()
+# Register handlers
 application.add_handler(CommandHandler("start", start))
 application.add_handler(CommandHandler("check", check_imei))
 application.add_handler(CommandHandler("help", help_command))
 
+# Flask webhook route
 @app.route(f"/{TOKEN}", methods=["POST"])
 def webhook():
-    try:
-        data = request.get_json(force=True)
-        print("🔔 Incoming update:", json.dumps(data))
-        update = Update.de_json(data, bot)
-        application.update_queue.put_nowait(update)
-    except Exception as e:
-        print("❌ Error processing update:", e)
+    update = Update.de_json(request.get_json(force=True), bot)
+    application.update_queue.put_nowait(update)
     return "OK"
 
 @app.route("/")
