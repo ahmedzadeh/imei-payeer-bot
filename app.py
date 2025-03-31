@@ -129,9 +129,14 @@ application.add_handler(CommandHandler("check", check_imei))
 application.add_handler(CommandHandler("help", help_command))
 
 @app.route(f"/{TOKEN}", methods=["POST"])
-async def webhook():
+def webhook():
     update = Update.de_json(request.get_json(force=True), application.bot)
-    await application.process_update(update)
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        loop.run_until_complete(application.process_update(update))
+    finally:
+        loop.close()
     return "OK"
 
 @app.route("/")
@@ -139,10 +144,6 @@ def home():
     return "Bot is running."
 
 if __name__ == "__main__":
-    async def main():
-        await application.initialize()
-        await application.bot.set_webhook(url=f"{WEBHOOK_URL}/{TOKEN}")
-        port = int(os.environ.get("PORT", 5000))
-        app.run(host="0.0.0.0", port=port)
-
-    asyncio.run(main())
+    asyncio.run(application.bot.set_webhook(url=f"{WEBHOOK_URL}/{TOKEN}"))
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)
