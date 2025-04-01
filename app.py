@@ -1,142 +1,207 @@
 import requests
-import hashlib
-import json
-import os
-import base64
+import sqlite3
 from flask import Flask, request
-from telegram import Update, ReplyKeyboardMarkup, KeyboardButton
-from telegram.ext import Application, CommandHandler, CallbackContext, MessageHandler, filters
+from telegram import Update, Bot
+from telegram.ext import Application, CommandHandler, ContextTypes
+import hashlib
+import uuid
 import asyncio
-
-TOKEN = os.getenv("BOT_TOKEN", "8018027330:AAGbqSQ5wQvLj2rPGXQ_MOWU3I8z7iUpjPw")
-API_KEY = os.getenv("PROIMEI_API_KEY", "PKZ-HK5-K6H-MRF-AXE-5VZ-LCN-W6L")
-API_URL = "https://proimei.info/en/prepaid/api"
-PAYEER_MERCHANT_ID = os.getenv("PAYEER_MERCHANT_ID", "2209595647")
-SECRET_KEY = os.getenv("PAYEER_SECRET_KEY", "123")
-WEBHOOK_URL = os.getenv("WEBHOOK_URL", "https://imei-payeer-bot.onrender.com")
+import threading
+from urllib.parse import urlencode
+import os
 
 app = Flask(__name__)
-PAYMENTS_FILE = "payments.json"
 
-# Setup Telegram bot application
-application = Application.builder().token(TOKEN).build()
+# Configuration via environment variables
+TOKEN = os.getenv("TOKEN", "8018027330:AAGbqSQ5wQvLj2rPGXQ_MOWU3I8z7iUpjPw")
+IMEI_API_KEY = os.getenv("IMEI_API_KEY", "PKZ-HK5-K6H-MRF-AXE-5VZ-LCN-W6L")
+PAYEER_MERCHANT_ID = os.getenv("PAYEER_MERCHANT_ID", "2209595647")
+PAYEER_SECRET_KEY = os.getenv("PAYEER_SECRET_KEY", "123")
+ADMIN_CHAT_IDS = [os.getenv("ADMIN_CHAT_ID", "6927331058")]  # Replace with your and your partner's chat IDs
+BASE_URL = "https://imei-payeer-bot.onrender.com"  # Your Render subdomain
+WEBSITE_URL = "https://imeichecks.online"  # Your GoDaddy domain
 
-# Util: Has user paid
-def has_paid(user_id, imei):
-    if not os.path.exists(PAYMENTS_FILE):
-        return False
-    with open(PAYMENTS_FILE, "r") as f:
-        payments = json.load(f)
-    return str(user_id) in payments and imei in payments[str(user_id)]
+# Constants
+IMEI_API_URL = "https://proimei.info/en/prepaid/api"
+PAYEER_PAYMENT_URL = "https://payeer.com/merchant/"
+bot = Bot(TOKEN)
 
-# Util: Save payment
-def save_payment(user_id, imei):
-    if os.path.exists(PAYMENTS_FILE):
-        with open(PAYMENTS_FILE, "r") as f:
-            payments = json.load(f)
-    else:
-        payments = {}
-    user_id_str = str(user_id)
-    if user_id_str not in payments:
-        payments[user_id_str] = []
-    if imei not in payments[user_id_str]:
-        payments[user_id_str].append(imei)
-    with open(PAYMENTS_FILE, "w") as f:
-        json.dump(payments, f)
+# Initialize SQLite database
+def init_db():
+    conn = sqlite3.connect("payments.db")
+    c = conn.cursor()
+    c.execute("""CREATE TABLE IF NOT EXISTS payments (
+        order_id TEXT PRIMARY KEY,
+        user_id INTEGER,
+        imei TEXT,
+        paid BOOLEAN
+    )""")
+    conn.commit()
+    conn.close()
 
-# Util: Generate Payeer link
-def generate_payeer_link(user_id, imei):
-    m_orderid = f"tg{user_id}_imei{imei}"
-    m_amount = "0.32"
-    m_curr = "USD"
-    plain_desc = "IMEI Check"
-    m_desc = base64.b64encode(plain_desc.encode("utf-8", errors="ignore")).decode()
-    sign_string = ":".join([
-        PAYEER_MERCHANT_ID, m_orderid, m_amount, m_curr, m_desc, SECRET_KEY
-    ])
-    m_sign = hashlib.sha256(sign_string.encode()).hexdigest().upper()
-    return (
-        f"https://payeer.com/merchant/?m_shop={PAYEER_MERCHANT_ID}"
-        f"&m_orderid={m_orderid}&m_amount={m_amount}&m_curr={m_curr}"
-        f"&m_desc={m_desc}&m_sign={m_sign}&lang=en"
-    )
+init_db()
 
-# /start handler
-async def start(update: Update, context: CallbackContext):
-    keyboard = [[KeyboardButton("🔍 Check IMEI")], [KeyboardButton("❓ Help")]]
-    markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(
-        f"👋 Welcome {update.effective_user.first_name}!\nI can check your IMEI info.\nPlease choose an option below:",
-        reply_markup=markup
-    )
-
-# /help handler
-async def help_command(update: Update, context: CallbackContext):
-    await update.message.reply_text(
-        "❓ *Help Menu*\n\nEach IMEI check costs $0.32.\nUse /check <IMEI> to begin.",
+        f"👋 Welcome to the IMEI Checker Bot!\n"
+        f"Send /check followed by a 15-digit IMEI number.\n"
+        f"Example: `/check 013440001737488`\n"
+        f"Payment of $0.32 USD via Payeer is required.\n"
+        f"Visit our website: {WEBSITE_URL}",
         parse_mode="Markdown"
     )
 
-# /check handler
-async def check_imei(update: Update, context: CallbackContext):
+async def check_imei(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not context.args:
-        await update.message.reply_text("⚠️ Please enter your 15-digit IMEI.")
-        return
-    imei = context.args[0]
-    user_id = update.effective_user.id
-
-    if not has_paid(user_id, imei):
-        link = generate_payeer_link(user_id, imei)
         await update.message.reply_text(
-            f"🔐 This IMEI check costs $0.32\n💳 Please pay using the link below:\n{link}"
+            "📌 Please enter a 15-digit IMEI number.\nExample: `/check 013440001737488`",
+            parse_mode="Markdown"
         )
         return
 
-    url = f"{API_URL}?api_key={API_KEY}&checker=simlock2&number={imei}"
+    imei = context.args[0]
+    if not (imei.isdigit() and len(imei) == 15):
+        await update.message.reply_text(
+            "❌ Please provide a valid 15-digit IMEI number.",
+            parse_mode="Markdown"
+        )
+        return
+
+    order_id = str(uuid.uuid4())
+    user_id = update.message.from_user.id
+    amount = "0.32"
+
+    # Store payment in SQLite
+    conn = sqlite3.connect("payments.db")
+    c = conn.cursor()
+    c.execute("INSERT INTO payments (order_id, user_id, imei, paid) VALUES (?, ?, ?, ?)",
+              (order_id, user_id, imei, False))
+    conn.commit()
+    conn.close()
+
+    payment_data = {
+        "m_shop": PAYEER_MERCHANT_ID,
+        "m_orderid": order_id,
+        "m_amount": amount,
+        "m_curr": "USD",
+        "m_desc": f"IMEI Check for {imei}",
+        "m_sign": hashlib.sha256(
+            f"{PAYEER_MERCHANT_ID}:{order_id}:{amount}:USD:{PAYEER_SECRET_KEY}".encode()
+        ).hexdigest(),
+        "m_status_url": f"{BASE_URL}/payeer",
+        "m_success_url": f"{BASE_URL}/success",
+        "m_fail_url": f"{BASE_URL}/fail"
+    }
+    payment_url = f"{PAYEER_PAYMENT_URL}?{urlencode(payment_data)}"
+
+    await update.message.reply_text(
+        f"💳 Please pay {amount} USD here:\n{payment_url}\n"
+        "Results will be sent automatically after payment.",
+        parse_mode="Markdown"
+    )
+
+async def report_error(error_message):
+    for chat_id in ADMIN_CHAT_IDS:
+        await bot.send_message(chat_id=chat_id, text=f"⚠️ Error: {error_message}", parse_mode="Markdown")
+
+async def send_results(user_id: int, imei: str):
+    params = {"api_key": IMEI_API_KEY, "checker": "simlock2", "number": imei}
     try:
-        r = requests.get(url)
-        if r.status_code == 200:
-            d = r.json()
-            msg = (
-                f"📱 *IMEI Information:*\n\n"
-                f"🔹 *IMEI 1:* {d.get('IMEI', 'N/A')}\n"
-                f"🔹 *IMEI 2:* {d.get('IMEI2', 'N/A')}\n"
-                f"🔹 *MEID:* {d.get('MEID', 'N/A')}\n"
-                f"🔹 *Serial Number:* {d.get('Serial Number', 'N/A')}\n"
-                f"🔹 *Description:* {d.get('Description', 'N/A')}\n"
-                f"🔹 *Date of Purchase:* {d.get('Date of purchase', 'N/A')}\n"
-                f"🔹 *Coverage:* {d.get('Repairs & Service Coverage', 'N/A')}\n"
-                f"🔹 *Is Replaced:* {d.get('is replaced', 'N/A')}\n"
-                f"🔹 *SIM Lock:* {d.get('SIM Lock', 'N/A')}"
-            )
-            await update.message.reply_text(msg, parse_mode="Markdown")
+        response = requests.get(IMEI_API_URL, params=params, timeout=10)
+        response.raise_for_status()
+        imei_data = response.json()
+
+        if not imei_data or "IMEI" not in imei_data:
+            await bot.send_message(chat_id=user_id, text="⚠️ No valid data found for this IMEI.", parse_mode="Markdown")
+            return
+
+        imei_1 = imei_data.get('IMEI', 'N/A')
+        imei_2 = imei_data.get('IMEI2', 'N/A')
+        meid = imei_data.get('MEID', 'N/A')
+        serial_number = imei_data.get('Serial Number', 'N/A')
+        description = imei_data.get('Description', 'N/A')
+        date_of_purchase = imei_data.get('Date of purchase', 'N/A')
+        repairs_service_coverage = imei_data.get('Repairs & Service Coverage', 'N/A')
+        is_replaced = imei_data.get('is replaced', 'N/A')
+        sim_lock = imei_data.get('SIM Lock', 'N/A')
+
+        message = (
+            f"📱 **IMEI Information:**\n\n"
+            f"🔹 **IMEI 1:** {imei_1}\n"
+            f"🔹 **IMEI 2:** {imei_2}\n"
+            f"🔹 **MEID:** {meid}\n"
+            f"🔹 **Serial Number:** {serial_number}\n"
+            f"🔹 **Description:** {description}\n"
+            f"🔹 **Date of Purchase:** {date_of_purchase}\n"
+            f"🔹 **Repairs & Service Coverage:** {repairs_service_coverage}\n"
+            f"🔹 **Is Replaced:** {is_replaced}\n"
+            f"🔹 **SIM Lock:** {sim_lock}"
+        )
+        await bot.send_message(chat_id=user_id, text=message, parse_mode="Markdown")
+    except requests.RequestException as e:
+        error_msg = f"IMEI check failed for user {user_id}, IMEI {imei}: {str(e)}"
+        await bot.send_message(chat_id=user_id, text=f"❌ IMEI check failed: {str(e)}. Try again later.", parse_mode="Markdown")
+        await report_error(error_msg)
+
+@app.route('/payeer', methods=['POST'])
+def payeer_callback():
+    data = request.form
+    required_fields = ['m_operation_id', 'm_sign', 'm_orderid', 'm_amount', 'm_curr', 'm_status']
+    if not all(field in data for field in required_fields):
+        error_msg = "Invalid callback data from Payeer"
+        asyncio.run_coroutine_threadsafe(report_error(error_msg), loop)
+        return "Invalid callback data", 400
+
+    m_operation_id = data['m_operation_id']
+    m_sign = data['m_sign']
+    m_orderid = data['m_orderid']
+    m_amount = data['m_amount']
+    m_curr = data['m_curr']
+    m_status = data['m_status']
+
+    sign_string = f"{m_operation_id}:{data.get('m_operation_ps', '')}:{data.get('m_operation_date', '')}:{data.get('m_operation_pay_date', '')}:{PAYEER_MERCHANT_ID}:{m_orderid}:{m_amount}:{m_curr}:{m_status}:{PAYEER_SECRET_KEY}"
+    expected_sign = hashlib.sha256(sign_string.encode()).hexdigest()
+
+    if m_sign == expected_sign and m_status == "success":
+        conn = sqlite3.connect("payments.db")
+        c = conn.cursor()
+        c.execute("SELECT user_id, imei FROM payments WHERE order_id = ? AND paid = 0", (m_orderid,))
+        result = c.fetchone()
+        if result:
+            user_id, imei = result
+            c.execute("UPDATE payments SET paid = 1 WHERE order_id = ?", (m_orderid,))
+            conn.commit()
+            asyncio.run_coroutine_threadsafe(send_results(user_id, imei), loop)
+            c.execute("DELETE FROM payments WHERE order_id = ?", (m_orderid,))
+            conn.commit()
+            conn.close()
+            return "OK"
         else:
-            await update.message.reply_text("❌ Error checking IMEI.")
-    except Exception as e:
-        await update.message.reply_text(f"⚠️ Error: {e}")
+            error_msg = f"Payment callback for order {m_orderid} failed: Order not found or already processed"
+            asyncio.run_coroutine_threadsafe(report_error(error_msg), loop)
+        conn.close()
+    else:
+        error_msg = f"Payment verification failed for order {m_orderid}: Invalid signature or status"
+        asyncio.run_coroutine_threadsafe(report_error(error_msg), loop)
+    return "Payment not verified", 400
 
-# Add handlers
-application.add_handler(CommandHandler("start", start))
-application.add_handler(CommandHandler("help", help_command))
-application.add_handler(CommandHandler("check", check_imei))
+@app.route('/success')
+def success():
+    return "Payment successful! Check Telegram for your results."
 
-# Routes
-@app.route("/")
-def index():
-    return "Bot is running."
+@app.route('/fail')
+def fail():
+    return "Payment failed. Try again in Telegram."
 
-@app.route(f"/{TOKEN}", methods=["POST"])
-def webhook():
-    update = Update.de_json(request.get_json(force=True), application.bot)
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    loop.run_until_complete(application.initialize())
-    loop.run_until_complete(application.process_update(update))
-    return "OK"
+def run_bot():
+    application = Application.builder().token(TOKEN).build()
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("check", check_imei))
+    print("Bot is running...")
+    application.run_polling()
 
 if __name__ == "__main__":
-    import logging
-    logging.basicConfig(level=logging.INFO)
-    asyncio.run(application.bot.set_webhook(url=f"{WEBHOOK_URL}/{TOKEN}"))
-    port = int(os.environ.get("PORT", 5000))
+    loop = asyncio.get_event_loop()
+    threading.Thread(target=run_bot, daemon=True).start()
+    port = int(os.environ.get("PORT", 10000))  # Render default
     app.run(host="0.0.0.0", port=port)
