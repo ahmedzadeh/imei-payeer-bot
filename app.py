@@ -150,24 +150,21 @@ async def check_imei(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     order_id = str(uuid.uuid4())
     user_id = update.message.from_user.id
-    amount = "{:.2f}".format(0.32)  # Ensure proper formatting
+    amount = "{:.2f}".format(0.32)
 
-    # Store payment in database
     conn = sqlite3.connect("payments.db")
     c = conn.cursor()
     c.execute("INSERT INTO payments (order_id, user_id, imei, paid) VALUES (?, ?, ?, ?)", (order_id, user_id, imei, False))
     conn.commit()
     conn.close()
 
-    # Generate Payeer payment link
     desc = f"IMEI Check for {imei}"
-    m_desc = base64.b64encode(desc.encode()).decode().strip()  # Base64 encode and strip newlines
+    m_desc = base64.b64encode(desc.encode()).decode().strip()
     sign_string = ":".join([PAYEER_MERCHANT_ID, order_id, amount, "USD", m_desc, PAYEER_SECRET_KEY])
     logger.info("Payeer sign string: %s", sign_string)
     m_sign = hashlib.sha256(sign_string.encode()).hexdigest().upper()
     logger.info("Generated m_sign: %s", m_sign)
 
-    # Use correct parameter names with underscores
     payment_data = {
         "m_shop": PAYEER_MERCHANT_ID,
         "m_orderid": order_id,
