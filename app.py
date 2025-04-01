@@ -56,12 +56,14 @@ def telegram_webhook():
 
     try:
         update = Update.de_json(update_json, bot)
-        loop = asyncio.get_event_loop()  # ⬅️ THIS IS KEY
-        loop.create_task(application.process_update(update))
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        loop.run_until_complete(application.process_update(update))
     except Exception as e:
         print("❌ Error processing update:", str(e))
 
     return "OK"
+
 
 
 
