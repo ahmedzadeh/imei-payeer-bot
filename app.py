@@ -165,6 +165,9 @@ async def check_imei(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "m_fail_url": f"{BASE_URL}/fail"
     }/payeer",
         "m_success_url": f"{BASE_URL}/success",
+        "m_fail_url": f"{BASE_URL}/fail"
+    }/payeer",
+        "m_success_url": f"{BASE_URL}/success",
         "m_fail_url": f"{BASE_URL}/fail",
         "lang": "en"
     }
