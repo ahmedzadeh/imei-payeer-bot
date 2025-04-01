@@ -3,32 +3,28 @@ import sqlite3
 from flask import Flask, request
 from telegram import Update, Bot
 from telegram.ext import Application, CommandHandler, ContextTypes
-from telegram.ext import Dispatcher
 import hashlib
 import uuid
 import asyncio
 import os
 from urllib.parse import urlencode
 
-app = Flask(__name__)
-
-# Configuration via environment variables
+# Configuration
 TOKEN = os.getenv("TOKEN", "8018027330:AAGbqSQ5wQvLj2rPGXQ_MOWU3I8z7iUpjPw")
-IMEI_API_KEY = os.getenv("IMEI_API_KEY", "PKZ-HK5-K6H-MRF-AXE-5VZ-LCN-W6L")
+IMEI_API_KEY = os.getenv("IMEI_API_KEY", "PKZ-HK5K6HMRFAXE5VZLCNW6L")
 PAYEER_MERCHANT_ID = os.getenv("PAYEER_MERCHANT_ID", "2210021863")
 PAYEER_SECRET_KEY = os.getenv("PAYEER_SECRET_KEY", "123")
 ADMIN_CHAT_IDS = [os.getenv("ADMIN_CHAT_ID", "6927331058")]
+BASE_URL = "https://api.imeichecks.online"
 WEBSITE_URL = "https://imeichecks.online"
 
 IMEI_API_URL = "https://proimei.info/en/prepaid/api"
 PAYEER_PAYMENT_URL = "https://payeer.com/merchant/"
-BASE_URL = "https://api.imeichecks.online"
 
+app = Flask(__name__)
 bot = Bot(TOKEN)
-application = Application.builder().token(TOKEN).build()
-dispatcher = application.dispatcher
 
-# Initialize SQLite database
+# Init DB
 def init_db():
     conn = sqlite3.connect("payments.db")
     c = conn.cursor()
@@ -44,22 +40,14 @@ def init_db():
 init_db()
 
 @app.route("/")
-def home():
-    return "IMEI Bot is running via webhook!"
-
-@app.route(f"/{TOKEN}", methods=["POST"])
-def telegram_webhook():
-    update = Update.de_json(request.get_json(force=True), bot)
-    dispatcher.process_update(update)
-    return "OK"
+def index():
+    return "Bot is running via webhook."
 
 @app.route('/payeer', methods=['POST'])
 def payeer_callback():
     data = request.form
     required_fields = ['m_operation_id', 'm_sign', 'm_orderid', 'm_amount', 'm_curr', 'm_status']
     if not all(field in data for field in required_fields):
-        error_msg = "Invalid callback data from Payeer"
-        asyncio.run_coroutine_threadsafe(report_error(error_msg), loop)
         return "Invalid callback data", 400
 
     m_operation_id = data['m_operation_id']
@@ -81,18 +69,11 @@ def payeer_callback():
             user_id, imei = result
             c.execute("UPDATE payments SET paid = 1 WHERE order_id = ?", (m_orderid,))
             conn.commit()
-            asyncio.run_coroutine_threadsafe(send_results(user_id, imei), loop)
+            asyncio.run(send_results(user_id, imei))
             c.execute("DELETE FROM payments WHERE order_id = ?", (m_orderid,))
             conn.commit()
-            conn.close()
-            return "OK"
-        else:
-            error_msg = f"Payment callback for order {m_orderid} failed: Order not found or already processed"
-            asyncio.run_coroutine_threadsafe(report_error(error_msg), loop)
         conn.close()
-    else:
-        error_msg = f"Payment verification failed for order {m_orderid}: Invalid signature or status"
-        asyncio.run_coroutine_threadsafe(report_error(error_msg), loop)
+        return "OK"
     return "Payment not verified", 400
 
 @app.route('/success')
@@ -103,8 +84,8 @@ def success():
 def fail():
     return "Payment failed. Try again in Telegram."
 
-# Telegram Commands
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+# Handlers
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         f"👋 Welcome to the IMEI Checker Bot!\n"
         f"Send /check followed by a 15-digit IMEI number.\n"
@@ -114,20 +95,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         parse_mode="Markdown"
     )
 
-async def check_imei(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def check_imei(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
-        await update.message.reply_text(
-            "📌 Please enter a 15-digit IMEI number.\nExample: `/check 013440001737488`",
-            parse_mode="Markdown"
-        )
+        await update.message.reply_text("Please provide a 15-digit IMEI.", parse_mode="Markdown")
         return
 
     imei = context.args[0]
-    if not (imei.isdigit() and len(imei) == 15):
-        await update.message.reply_text(
-            "❌ Please provide a valid 15-digit IMEI number.",
-            parse_mode="Markdown"
-        )
+    if not imei.isdigit() or len(imei) != 15:
+        await update.message.reply_text("Invalid IMEI. Please provide a 15-digit number.", parse_mode="Markdown")
         return
 
     order_id = str(uuid.uuid4())
@@ -136,8 +111,7 @@ async def check_imei(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
     conn = sqlite3.connect("payments.db")
     c = conn.cursor()
-    c.execute("INSERT INTO payments (order_id, user_id, imei, paid) VALUES (?, ?, ?, ?)",
-              (order_id, user_id, imei, False))
+    c.execute("INSERT INTO payments (order_id, user_id, imei, paid) VALUES (?, ?, ?, ?)", (order_id, user_id, imei, False))
     conn.commit()
     conn.close()
 
@@ -156,51 +130,47 @@ async def check_imei(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     payment_url = f"{PAYEER_PAYMENT_URL}?{urlencode(payment_data)}"
 
     await update.message.reply_text(
-        f"💳 Please pay {amount} USD here:\n{payment_url}\n"
-        "Results will be sent automatically after payment.",
+        f"💳 Please pay {amount} USD here:\n{payment_url}\nResults will be sent automatically after payment.",
         parse_mode="Markdown"
     )
-
-async def report_error(error_message):
-    for chat_id in ADMIN_CHAT_IDS:
-        await bot.send_message(chat_id=chat_id, text=f"⚠️ Error: {error_message}", parse_mode="Markdown")
 
 async def send_results(user_id: int, imei: str):
     params = {"api_key": IMEI_API_KEY, "checker": "simlock2", "number": imei}
     try:
         response = requests.get(IMEI_API_URL, params=params, timeout=10)
         response.raise_for_status()
-        imei_data = response.json()
+        data = response.json()
 
-        if not imei_data or "IMEI" not in imei_data:
-            await bot.send_message(chat_id=user_id, text="⚠️ No valid data found for this IMEI.", parse_mode="Markdown")
-            return
-
-        message = "\n".join([
-            "📱 **IMEI Information:**",
-            f"🔹 **IMEI 1:** {imei_data.get('IMEI', 'N/A')}",
-            f"🔹 **IMEI 2:** {imei_data.get('IMEI2', 'N/A')}",
-            f"🔹 **MEID:** {imei_data.get('MEID', 'N/A')}",
-            f"🔹 **Serial Number:** {imei_data.get('Serial Number', 'N/A')}",
-            f"🔹 **Description:** {imei_data.get('Description', 'N/A')}",
-            f"🔹 **Date of Purchase:** {imei_data.get('Date of purchase', 'N/A')}",
-            f"🔹 **Repairs & Service Coverage:** {imei_data.get('Repairs & Service Coverage', 'N/A')}",
-            f"🔹 **Is Replaced:** {imei_data.get('is replaced', 'N/A')}",
-            f"🔹 **SIM Lock:** {imei_data.get('SIM Lock', 'N/A')}",
+        msg = "\n".join([
+            "📱 *IMEI Info:*",
+            f"🔹 *IMEI 1:* {data.get('IMEI', 'N/A')}",
+            f"🔹 *IMEI 2:* {data.get('IMEI2', 'N/A')}",
+            f"🔹 *MEID:* {data.get('MEID', 'N/A')}",
+            f"🔹 *Serial Number:* {data.get('Serial Number', 'N/A')}",
+            f"🔹 *Description:* {data.get('Description', 'N/A')}",
+            f"🔹 *Purchase Date:* {data.get('Date of purchase', 'N/A')}",
+            f"🔹 *Coverage:* {data.get('Repairs & Service Coverage', 'N/A')}",
+            f"🔹 *Is Replaced:* {data.get('is replaced', 'N/A')}",
+            f"🔹 *SIM Lock:* {data.get('SIM Lock', 'N/A')}",
         ])
 
-        await bot.send_message(chat_id=user_id, text=message, parse_mode="Markdown")
+        await bot.send_message(chat_id=user_id, text=msg, parse_mode="Markdown")
+    except Exception as e:
+        await bot.send_message(chat_id=user_id, text=f"❌ Failed to fetch IMEI data: {e}")
 
-    except requests.RequestException as e:
-        error_msg = f"IMEI check failed for user {user_id}, IMEI {imei}: {str(e)}"
-        await bot.send_message(chat_id=user_id, text=f"❌ IMEI check failed: {str(e)}. Try again later.", parse_mode="Markdown")
-        await report_error(error_msg)
-
-# Add command handlers
-application.add_handler(CommandHandler("start", start))
-application.add_handler(CommandHandler("check", check_imei))
-
-if __name__ == "__main__":
-    loop = asyncio.get_event_loop()
+if __name__ == '__main__':
     port = int(os.environ.get("PORT", 8080))
-    app.run(host="0.0.0.0", port=port)
+    app_url = f"{BASE_URL}/{TOKEN}"
+
+    asyncio.run(
+        Application.builder()
+        .token(TOKEN)
+        .build()
+        .add_handler(CommandHandler("start", start))
+        .add_handler(CommandHandler("check", check_imei))
+        .run_webhook(
+            listen="0.0.0.0",
+            port=port,
+            webhook_url=app_url
+        )
+    )
