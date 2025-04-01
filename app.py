@@ -152,13 +152,16 @@ async def check_imei(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     payment_url = (
         f"{PAYEER_PAYMENT_URL}?"
-        f"m_shop={PAYEER_MERCHANT_ID}"
-        f"&m_orderid={order_id}"
-        f"&m_amount={amount}"
-        f"&m_curr=USD"
-        f"&m_desc={m_desc}"
-        f"&m_sign={m_sign}"
-        f"&lang=en"
+        f"m_shop={quote_plus(PAYEER_MERCHANT_ID)}&"
+        f"m_orderid={quote_plus(order_id)}&"
+        f"m_amount={quote_plus(amount)}&"
+        f"m_curr=USD&"
+        f"m_desc={quote_plus(m_desc)}&"
+        f"m_sign={quote_plus(m_sign)}&"
+        f"m_status_url={quote_plus(BASE_URL + '/payeer')}&"
+        f"m_success_url={quote_plus(BASE_URL + '/success')}&"
+        f"m_fail_url={quote_plus(BASE_URL + '/fail')}&"
+        f"lang=en"
     )
 
     await update.message.reply_text(
