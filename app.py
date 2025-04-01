@@ -137,7 +137,7 @@ async def check_imei(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     order_id = str(uuid.uuid4())
     user_id = update.message.from_user.id
-    amount = "0.32"
+    amount = "{:.2f}".format(0.32)
 
     conn = sqlite3.connect("payments.db")
     c = conn.cursor()
@@ -150,20 +150,19 @@ async def check_imei(update: Update, context: ContextTypes.DEFAULT_TYPE):
     sign_string = f"{PAYEER_MERCHANT_ID}:{order_id}:{amount}:USD:{m_desc}:{PAYEER_SECRET_KEY}"
     m_sign = hashlib.sha256(sign_string.encode()).hexdigest().upper()
 
-    payment_data = {
-        "m_shop": PAYEER_MERCHANT_ID,
-        "m_orderid": order_id,
-        "m_amount": amount,
-        "m_curr": "USD",
-        "m_desc": m_desc,
-        "m_sign": m_sign,
-        "m_status_url": f"{BASE_URL}/payeer",
-        "m_success_url": f"{BASE_URL}/success",
-        "m_fail_url": f"{BASE_URL}/fail",
-        "lang": "en"
-    }
-
-    payment_url = PAYEER_PAYMENT_URL + "?" + "&".join(f"{k}={quote_plus(str(v))}" for k, v in payment_data.items())
+    payment_url = (
+        f"{PAYEER_PAYMENT_URL}?"
+        f"m_shop={PAYEER_MERCHANT_ID}"
+        f"&m_orderid={order_id}"
+        f"&m_amount={amount}"
+        f"&m_curr=USD"
+        f"&m_desc={m_desc}"
+        f"&m_sign={m_sign}"
+        f"&m_status_url={quote_plus(BASE_URL + '/payeer')}"
+        f"&m_success_url={quote_plus(BASE_URL + '/success')}"
+        f"&m_fail_url={quote_plus(BASE_URL + '/fail')}"
+        f"&lang=en"
+    )
 
     await update.message.reply_text(
         f"💳 Please pay {amount} USD here:\n{payment_url}\nResults will be sent automatically after payment.",
