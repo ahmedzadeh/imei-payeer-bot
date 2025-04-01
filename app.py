@@ -1,14 +1,14 @@
 import requests
 import sqlite3
+import base64
 from flask import Flask, request
 from telegram import Update, Bot
-from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, filters
+from telegram.ext import Application, CommandHandler, ContextTypes
 import hashlib
 import uuid
 import asyncio
 import os
 from urllib.parse import urlencode
-import base64
 
 # Configuration
 TOKEN = os.getenv("TOKEN", "8018027330:AAGbqSQ5wQvLj2rPGXQ_MOWU3I8z7iUpjPw")
@@ -23,8 +23,7 @@ IMEI_API_URL = "https://proimei.info/en/prepaid/api"
 PAYEER_PAYMENT_URL = "https://payeer.com/merchant/"
 
 app = Flask(__name__)
-loop = asyncio.new_event_loop()
-asyncio.set_event_loop(loop)
+bot = Bot(TOKEN)
 
 # Init DB
 def init_db():
@@ -47,20 +46,8 @@ def index():
 
 @app.route(f"/{TOKEN}", methods=["POST"])
 def telegram_webhook():
-    update_json = request.get_json(force=True)
-    print("✅ Webhook called")
-    print("📦 Payload received:", update_json)
-
-    try:
-        update = Update.de_json(update_json, bot)
-
-        async def handle():
-            await application.process_update(update)
-
-        loop.run_until_complete(handle())
-    except Exception as e:
-        print("❌ Error processing update:", str(e))
-
+    update = Update.de_json(request.get_json(force=True), bot)
+    loop.create_task(application.process_update(update))
     return "OK"
 
 @app.route('/payeer', methods=['POST'])
@@ -89,7 +76,7 @@ def payeer_callback():
             user_id, imei = result
             c.execute("UPDATE payments SET paid = 1 WHERE order_id = ?", (m_orderid,))
             conn.commit()
-            loop.create_task(send_results(user_id, imei))
+            asyncio.run(send_results(user_id, imei))
             c.execute("DELETE FROM payments WHERE order_id = ?", (m_orderid,))
             conn.commit()
         conn.close()
@@ -106,19 +93,14 @@ def fail():
 
 # Handlers
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    print("📥 /start handler triggered by", update.effective_user.id)
-    try:
-        await update.message.reply_text(
-            "👋 Welcome to the IMEI Checker Bot!\n"
-            "Send /check followed by a 15-digit IMEI number.\n"
-            "Example: `/check 013440001737488`\n"
-            "Payment of $0.32 USD via Payeer is required.\n"
-            f"Visit our website: {WEBSITE_URL}",
-            parse_mode="Markdown"
-        )
-        print("✅ /start message sent successfully.")
-    except Exception as e:
-        print("❌ Error in /start:", str(e))
+    await update.message.reply_text(
+        f"👋 Welcome to the IMEI Checker Bot!\n"
+        f"Send /check followed by a 15-digit IMEI number.\n"
+        f"Example: `/check 013440001737488`\n"
+        f"Payment of $0.32 USD via Payeer is required.\n"
+        f"Visit our website: {WEBSITE_URL}",
+        parse_mode="Markdown"
+    )
 
 async def check_imei(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
@@ -140,18 +122,12 @@ async def check_imei(update: Update, context: ContextTypes.DEFAULT_TYPE):
     conn.commit()
     conn.close()
 
-    desc = f"IMEI Check for {imei}"
-    m_desc = base64.b64encode(desc.encode()).decode()
-    sign_string = f"{PAYEER_MERCHANT_ID}:{order_id}:{amount}:USD:{m_desc}:{PAYEER_SECRET_KEY}"
-    m_sign = hashlib.sha256(sign_string.encode()).hexdigest().upper()
+    # Prepare and encode description
+    imei_description = f"IMEI Check for {imei}"
+    encoded_desc = base64.b64encode(imei_description.encode()).decode()
 
-    import base64
-
-    description = f"IMEI Check for {imei}"
-    encoded_desc = base64.b64encode(description.encode()).decode()
-
-    sign_str = f"{PAYEER_MERCHANT_ID}:{order_id}:{amount}:USD:{encoded_desc}:{PAYEER_SECRET_KEY}"
-    sign = hashlib.sha256(sign_str.encode()).hexdigest().upper()
+    sign_string = f"{PAYEER_MERCHANT_ID}:{order_id}:{amount}:USD:{PAYEER_SECRET_KEY}"
+    sign_hash = hashlib.sha256(sign_string.encode()).hexdigest().upper()
 
     payment_data = {
         "m_shop": PAYEER_MERCHANT_ID,
@@ -159,14 +135,8 @@ async def check_imei(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "m_amount": amount,
         "m_curr": "USD",
         "m_desc": encoded_desc,
-        "m_sign": sign,
+        "m_sign": sign_hash,
         "m_status_url": f"{BASE_URL}/payeer",
-        "m_success_url": f"{BASE_URL}/success",
-        "m_fail_url": f"{BASE_URL}/fail"
-    }/payeer",
-        "m_success_url": f"{BASE_URL}/success",
-        "m_fail_url": f"{BASE_URL}/fail"
-    }/payeer",
         "m_success_url": f"{BASE_URL}/success",
         "m_fail_url": f"{BASE_URL}/fail",
         "lang": "en"
@@ -203,14 +173,18 @@ async def send_results(user_id: int, imei: str):
     except Exception as e:
         await bot.send_message(chat_id=user_id, text=f"❌ Failed to fetch IMEI data: {e}")
 
-# Create Telegram app and register handlers AFTER defining functions
-application = Application.builder().token(TOKEN).build()
-bot = application.bot
-application.add_handler(CommandHandler("start", start))
-application.add_handler(CommandHandler("check", check_imei))
-application.add_handler(MessageHandler(filters.ALL, lambda u, c: print("📩 Caught unmatched update from:", u.effective_user.id)))
-loop.run_until_complete(application.initialize())
-
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 8080))
+    app_url = f"{BASE_URL}/{TOKEN}"
+
+    async def main():
+        global application
+        global loop
+        loop = asyncio.get_event_loop()
+        application = Application.builder().token(TOKEN).build()
+        application.add_handler(CommandHandler("start", start))
+        application.add_handler(CommandHandler("check", check_imei))
+        await application.initialize()
+
+    asyncio.run(main())
     app.run(host="0.0.0.0", port=port)
