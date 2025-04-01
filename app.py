@@ -50,19 +50,26 @@ def index():
 
 @app.route(f"/{TOKEN}", methods=["POST"])
 def telegram_webhook():
-    update_json = request.get_json(force=True)
     print("✅ Webhook called")
+    update_json = request.get_json(force=True)
     print("📦 Payload received:", update_json)
 
     try:
         update = Update.de_json(update_json, bot)
+
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
-        loop.run_until_complete(application.process_update(update))
+
+        async def handle():
+            await application.initialize()
+            await application.process_update(update)
+
+        loop.run_until_complete(handle())
     except Exception as e:
         print("❌ Error processing update:", str(e))
 
     return "OK"
+
 
 
 
