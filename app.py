@@ -7,7 +7,7 @@ import hashlib
 import uuid
 import asyncio
 import os
-from urllib.parse import quote_plus
+from urllib.parse import urlencode
 import base64
 import logging
 
@@ -163,7 +163,7 @@ async def check_imei(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "lang": "en"
     }
 
-    payment_url = PAYEER_PAYMENT_URL + "?" + "&".join(f"{k}={quote_plus(v)}" for k, v in payment_data.items())
+    payment_url = PAYEER_PAYMENT_URL + "?" + urlencode(payment_data)
 
     await update.message.reply_text(
         f"💳 Please pay {amount} USD here:\n{payment_url}\nResults will be sent automatically after payment.",
