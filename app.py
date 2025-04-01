@@ -164,8 +164,6 @@ async def check_imei(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"lang=en"
     )
 
-    logger.warning(f"✅ DEBUG: Used m_shop format for order_id {order_id}")
-
     await update.message.reply_text(
         f"💳 Please pay {amount} USD here:\n{payment_url}\nResults will be sent automatically after payment.",
         parse_mode="Markdown"
