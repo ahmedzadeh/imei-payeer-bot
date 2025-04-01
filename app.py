@@ -22,12 +22,17 @@ IMEI_API_URL = "https://proimei.info/en/prepaid/api"
 PAYEER_PAYMENT_URL = "https://payeer.com/merchant/"
 
 app = Flask(__name__)
+
+# Create and set global event loop
 loop = asyncio.new_event_loop()
 asyncio.set_event_loop(loop)
+
+# Create Telegram app
 application = Application.builder().token(TOKEN).build()
+bot = application.bot
 application.add_handler(CommandHandler("start", lambda u, c: loop.create_task(start(u, c))))
 application.add_handler(CommandHandler("check", lambda u, c: loop.create_task(check_imei(u, c))))
-bot = application.bot
+loop.run_until_complete(application.initialize())
 
 # Init DB
 def init_db():
@@ -50,29 +55,15 @@ def index():
 
 @app.route(f"/{TOKEN}", methods=["POST"])
 def telegram_webhook():
-    print("✅ Webhook called")
     update_json = request.get_json(force=True)
+    print("✅ Webhook called")
     print("📦 Payload received:", update_json)
-
     try:
         update = Update.de_json(update_json, bot)
-
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-
-        async def handle():
-            await application.initialize()
-            await application.process_update(update)
-
-        loop.run_until_complete(handle())
+        loop.create_task(application.process_update(update))
     except Exception as e:
         print("❌ Error processing update:", str(e))
-
     return "OK"
-
-
-
-
 
 @app.route('/payeer', methods=['POST'])
 def payeer_callback():
