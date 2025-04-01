@@ -9,12 +9,17 @@ import asyncio
 import os
 from urllib.parse import urlencode
 import base64
+import logging
+
+# Set up logging
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+logger = logging.getLogger(__name__)
 
 # Configuration
 TOKEN = os.getenv("TOKEN", "8018027330:AAGbqSQ5wQvLj2rPGXQ_MOWU3I8z7iUpjPw")
 IMEI_API_KEY = os.getenv("IMEI_API_KEY", "PKZ-HK5K6HMRFAXE5VZLCNW6L")
 PAYEER_MERCHANT_ID = os.getenv("PAYEER_MERCHANT_ID", "2210021863")
-PAYEER_SECRET_KEY = os.getenv("PAYEER_SECRET_KEY", "123")
+PAYEER_SECRET_KEY = os.getenv("PAYEER_SECRET_KEY", "123")  # Matches Payeer's testing environment
 ADMIN_CHAT_IDS = [os.getenv("ADMIN_CHAT_ID", "6927331058")]
 BASE_URL = "https://api.imeichecks.online"
 WEBSITE_URL = "https://imeichecks.online"
@@ -22,11 +27,19 @@ WEBSITE_URL = "https://imeichecks.online"
 IMEI_API_URL = "https://proimei.info/en/prepaid/api"
 PAYEER_PAYMENT_URL = "https://payeer.com/merchant/"
 
+# Validate environment variables
+if not TOKEN:
+    logger.error("Telegram TOKEN is not set. Please set the TOKEN environment variable.")
+    exit(1)
+if not PAYEER_MERCHANT_ID or not PAYEER_SECRET_KEY:
+    logger.error("Payeer credentials are not set. Please set PAYEER_MERCHANT_ID and PAYEER_SECRET_KEY.")
+    exit(1)
+
 app = Flask(__name__)
 loop = asyncio.new_event_loop()
 asyncio.set_event_loop(loop)
 
-# Init DB
+# Initialize Database
 def init_db():
     conn = sqlite3.connect("payments.db")
     c = conn.cursor()
@@ -41,6 +54,7 @@ def init_db():
 
 init_db()
 
+# Flask Routes
 @app.route("/")
 def index():
     return "Bot is running via Flask webhook."
@@ -48,8 +62,7 @@ def index():
 @app.route(f"/{TOKEN}", methods=["POST"])
 def telegram_webhook():
     update_json = request.get_json(force=True)
-    print("✅ Webhook called")
-    print("📦 Payload received:", update_json)
+    logger.info("Webhook called with payload: %s", update_json)
 
     try:
         update = Update.de_json(update_json, bot)
@@ -59,7 +72,7 @@ def telegram_webhook():
 
         loop.run_until_complete(handle())
     except Exception as e:
-        print("❌ Error processing update:", str(e))
+        logger.error("Error processing update: %s", str(e))
 
     return "OK"
 
@@ -68,6 +81,7 @@ def payeer_callback():
     data = request.form
     required_fields = ['m_operation_id', 'm_sign', 'm_orderid', 'm_amount', 'm_curr', 'm_status']
     if not all(field in data for field in required_fields):
+        logger.error("Invalid callback data: %s", data)
         return "Invalid callback data", 400
 
     m_operation_id = data['m_operation_id']
@@ -94,6 +108,7 @@ def payeer_callback():
             conn.commit()
         conn.close()
         return "OK"
+    logger.error("Payment not verified. Expected sign: %s, Received sign: %s", expected_sign, m_sign)
     return "Payment not verified", 400
 
 @app.route('/success')
@@ -104,9 +119,9 @@ def success():
 def fail():
     return "Payment failed. Try again in Telegram."
 
-# Handlers
+# Telegram Handlers
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    print("📥 /start handler triggered by", update.effective_user.id)
+    logger.info("/start handler triggered by user %s", update.effective_user.id)
     try:
         await update.message.reply_text(
             "👋 Welcome to the IMEI Checker Bot!\n"
@@ -116,9 +131,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"Visit our website: {WEBSITE_URL}",
             parse_mode="Markdown"
         )
-        print("✅ /start message sent successfully.")
+        logger.info("/start message sent successfully to user %s", update.effective_user.id)
     except Exception as e:
-        print("❌ Error in /start:", str(e))
+        logger.error("Error in /start: %s", str(e))
 
 async def check_imei(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
@@ -132,18 +147,22 @@ async def check_imei(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     order_id = str(uuid.uuid4())
     user_id = update.message.from_user.id
-    amount = "0.32"
+    amount = "{:.2f}".format(0.32)  # Ensure proper formatting
 
+    # Store payment in database
     conn = sqlite3.connect("payments.db")
     c = conn.cursor()
     c.execute("INSERT INTO payments (order_id, user_id, imei, paid) VALUES (?, ?, ?, ?)", (order_id, user_id, imei, False))
     conn.commit()
     conn.close()
 
+    # Generate Payeer payment link
     desc = f"IMEI Check for {imei}"
-    m_desc = base64.b64encode(desc.encode()).decode()  # Base64 encode
-    sign_string = f"{PAYEER_MERCHANT_ID}:{order_id}:{amount}:USD:{m_desc}:{PAYEER_SECRET_KEY}"
-    m_sign = hashlib.sha256(sign_string.encode()).hexdigest().upper()  # UPPERCASE
+    m_desc = base64.b64encode(desc.encode()).decode().strip()  # Base64 encode and strip newlines
+    sign_string = ":".join([PAYEER_MERCHANT_ID, order_id, amount, "USD", m_desc, PAYEER_SECRET_KEY])
+    logger.info("Payeer sign string: %s", sign_string)
+    m_sign = hashlib.sha256(sign_string.encode()).hexdigest().upper()
+    logger.info("Generated m_sign: %s", m_sign)
 
     payment_data = {
         "m_shop": PAYEER_MERCHANT_ID,
@@ -159,6 +178,7 @@ async def check_imei(update: Update, context: ContextTypes.DEFAULT_TYPE):
     }
 
     payment_url = f"{PAYEER_PAYMENT_URL}?{urlencode(payment_data)}"
+    logger.info("Generated payment URL: %s", payment_url)
 
     await update.message.reply_text(
         f"💳 Please pay {amount} USD here:\n{payment_url}\nResults will be sent automatically after payment.",
@@ -186,17 +206,20 @@ async def send_results(user_id: int, imei: str):
         ])
 
         await bot.send_message(chat_id=user_id, text=msg, parse_mode="Markdown")
+        logger.info("IMEI results sent to user %s", user_id)
     except Exception as e:
+        logger.error("Failed to fetch IMEI data for user %s: %s", user_id, str(e))
         await bot.send_message(chat_id=user_id, text=f"❌ Failed to fetch IMEI data: {e}")
 
-# Create Telegram app and register handlers AFTER defining functions
+# Initialize Telegram Application
 application = Application.builder().token(TOKEN).build()
 bot = application.bot
 application.add_handler(CommandHandler("start", start))
 application.add_handler(CommandHandler("check", check_imei))
-application.add_handler(MessageHandler(filters.ALL, lambda u, c: print("📩 Caught unmatched update from:", u.effective_user.id)))
+application.add_handler(MessageHandler(filters.ALL, lambda u, c: logger.info("Caught unmatched update from user: %s", u.effective_user.id)))
 loop.run_until_complete(application.initialize())
 
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 8080))
+    logger.info("Starting Flask app on port %s", port)
     app.run(host="0.0.0.0", port=port)
