@@ -22,7 +22,8 @@ IMEI_API_URL = "https://proimei.info/en/prepaid/api"
 PAYEER_PAYMENT_URL = "https://payeer.com/merchant/"
 
 app = Flask(__name__)
-loop = asyncio.get_event_loop()
+loop = asyncio.new_event_loop()
+asyncio.set_event_loop(loop)
 application = Application.builder().token(TOKEN).build()
 application.add_handler(CommandHandler("start", lambda u, c: loop.create_task(start(u, c))))
 application.add_handler(CommandHandler("check", lambda u, c: loop.create_task(check_imei(u, c))))
