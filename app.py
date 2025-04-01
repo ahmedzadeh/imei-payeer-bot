@@ -158,9 +158,6 @@ async def check_imei(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"&m_curr=USD"
         f"&m_desc={m_desc}"
         f"&m_sign={m_sign}"
-        f"&m_status_url={quote_plus(BASE_URL + '/payeer')}"
-        f"&m_success_url={quote_plus(BASE_URL + '/success')}"
-        f"&m_fail_url={quote_plus(BASE_URL + '/fail')}"
         f"&lang=en"
     )
 
