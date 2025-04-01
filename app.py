@@ -2,7 +2,7 @@ import requests
 import sqlite3
 from flask import Flask, request
 from telegram import Update, Bot
-from telegram.ext import Application, CommandHandler, ContextTypes
+from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, filters
 import hashlib
 import uuid
 import asyncio
@@ -181,6 +181,7 @@ application = Application.builder().token(TOKEN).build()
 bot = application.bot
 application.add_handler(CommandHandler("start", start))
 application.add_handler(CommandHandler("check", check_imei))
+application.add_handler(MessageHandler(filters.ALL, lambda u, c: print("📩 Caught unmatched update from:", u.effective_user.id)))
 loop.run_until_complete(application.initialize())
 
 if __name__ == '__main__':
