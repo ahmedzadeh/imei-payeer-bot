@@ -52,13 +52,17 @@ def index():
 def telegram_webhook():
     update_json = request.get_json(force=True)
     print("✅ Webhook called")
-    print("📦 Payload received:", update_json)  # DEBUG LOG
+    print("📦 Payload received:", update_json)
+
     try:
         update = Update.de_json(update_json, bot)
-        application.create_task(application.process_update(update))
+        loop = asyncio.get_event_loop()  # ⬅️ THIS IS KEY
+        loop.create_task(application.process_update(update))
     except Exception as e:
         print("❌ Error processing update:", str(e))
+
     return "OK"
+
 
 
 @app.route('/payeer', methods=['POST'])
