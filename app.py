@@ -164,7 +164,7 @@ async def check_imei(update: Update, context: ContextTypes.DEFAULT_TYPE):
     m_sign = hashlib.sha256(sign_string.encode()).hexdigest().upper()
     logger.info("Generated m_sign: %s", m_sign)
 
-    # Use only the required parameters for the payment link
+    # Use correct parameter names with underscores
     payment_data = {
         "m_shop": PAYEER_MERCHANT_ID,
         "m_orderid": order_id,
