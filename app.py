@@ -30,9 +30,10 @@ asyncio.set_event_loop(loop)
 # Create Telegram app
 application = Application.builder().token(TOKEN).build()
 bot = application.bot
-application.add_handler(CommandHandler("start", lambda u, c: loop.create_task(start(u, c))))
-application.add_handler(CommandHandler("check", lambda u, c: loop.create_task(check_imei(u, c))))
+application.add_handler(CommandHandler("start", start))
+application.add_handler(CommandHandler("check", check_imei))
 loop.run_until_complete(application.initialize())
+
 
 # Init DB
 def init_db():
