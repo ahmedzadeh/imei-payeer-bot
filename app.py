@@ -160,7 +160,7 @@ async def check_imei(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     desc = f"IMEI Check for {imei}"
     m_desc = base64.b64encode(desc.encode()).decode().strip()
-    sign_string = ":".join([PAYEER_MERCHANT_ID, order_id, amount, "USD", m_desc, PAYEER_SECRET_KEY])
+    sign_string = f"{PAYEER_MERCHANT_ID}:{order_id}:{amount}:USD:{m_desc}:{PAYEER_SECRET_KEY}"
     logger.info("Payeer sign string: %s", sign_string)
     m_sign = hashlib.sha256(sign_string.encode()).hexdigest().upper()
     logger.info("Generated m_sign: %s", m_sign)
@@ -175,7 +175,7 @@ async def check_imei(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "lang": "en"
     }
 
-    payment_url = f"{PAYEER_PAYMENT_URL}?{urlencode(payment_data)}"
+    payment_url = f"https://payeer.com/merchant/?{urlencode(payment_data)}"
     logger.info("Generated payment URL: %s", payment_url)
 
     await update.message.reply_text(
