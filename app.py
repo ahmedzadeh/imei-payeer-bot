@@ -7,7 +7,7 @@ import hashlib
 import uuid
 import asyncio
 import os
-from urllib.parse import urlencode
+from urllib.parse import quote_plus
 import base64
 import logging
 
@@ -137,7 +137,7 @@ async def check_imei(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     order_id = str(uuid.uuid4())
     user_id = update.message.from_user.id
-    amount = "{:.2f}".format(0.32)
+    amount = "0.32"
 
     conn = sqlite3.connect("payments.db")
     c = conn.cursor()
@@ -163,7 +163,7 @@ async def check_imei(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "lang": "en"
     }
 
-    payment_url = PAYEER_PAYMENT_URL + "?" + urlencode(payment_data)
+    payment_url = PAYEER_PAYMENT_URL + "?" + "&".join(f"{k}={quote_plus(str(v))}" for k, v in payment_data.items())
 
     await update.message.reply_text(
         f"💳 Please pay {amount} USD here:\n{payment_url}\nResults will be sent automatically after payment.",
