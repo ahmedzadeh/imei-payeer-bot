@@ -162,15 +162,15 @@ if __name__ == '__main__':
     port = int(os.environ.get("PORT", 8080))
     app_url = f"{BASE_URL}/{TOKEN}"
 
-    asyncio.run(
-        Application.builder()
-        .token(TOKEN)
-        .build()
-        .add_handler(CommandHandler("start", start))
-        .add_handler(CommandHandler("check", check_imei))
-        .run_webhook(
+    async def main():
+        app_instance = Application.builder().token(TOKEN).build()
+        app_instance.add_handler(CommandHandler("start", start))
+        app_instance.add_handler(CommandHandler("check", check_imei))
+
+        await app_instance.run_webhook(
             listen="0.0.0.0",
             port=port,
             webhook_url=app_url
         )
-    )
+
+    asyncio.run(main())
