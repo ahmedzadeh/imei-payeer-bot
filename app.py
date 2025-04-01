@@ -49,12 +49,19 @@ def telegram_webhook():
     update_json = request.get_json(force=True)
     print("✅ Webhook called")
     print("📦 Payload received:", update_json)
+
     try:
         update = Update.de_json(update_json, bot)
-        loop.create_task(application.process_update(update))
+
+        async def handle():
+            await application.process_update(update)
+
+        loop.run_until_complete(handle())
     except Exception as e:
         print("❌ Error processing update:", str(e))
+
     return "OK"
+
 
 @app.route('/payeer', methods=['POST'])
 def payeer_callback():
