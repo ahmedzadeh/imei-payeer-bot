@@ -15,7 +15,7 @@ app = Flask(__name__)
 # Configuration via environment variables
 TOKEN = os.getenv("TOKEN", "8018027330:AAGbqSQ5wQvLj2rPGXQ_MOWU3I8z7iUpjPw")
 IMEI_API_KEY = os.getenv("IMEI_API_KEY", "PKZ-HK5-K6H-MRF-AXE-5VZ-LCN-W6L")
-PAYEER_MERCHANT_ID = os.getenv("PAYEER_MERCHANT_ID", "2209595647")
+PAYEER_MERCHANT_ID = os.getenv("PAYEER_MERCHANT_ID", "2210021863")
 PAYEER_SECRET_KEY = os.getenv("PAYEER_SECRET_KEY", "123")
 ADMIN_CHAT_IDS = [os.getenv("ADMIN_CHAT_ID", "6927331058")]  # Replace with your and your partner's chat IDs
 BASE_URL = "https://imei-payeer-bot.onrender.com"  # Your Render subdomain
