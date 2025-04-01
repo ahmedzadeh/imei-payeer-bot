@@ -108,14 +108,21 @@ def fail():
 
 # Handlers
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        f"👋 Welcome to the IMEI Checker Bot!\n"
-        f"Send /check followed by a 15-digit IMEI number.\n"
-        f"Example: `/check 013440001737488`\n"
-        f"Payment of $0.32 USD via Payeer is required.\n"
-        f"Visit our website: {WEBSITE_URL}",
-        parse_mode="Markdown"
-    )
+    print("📥 /start handler triggered by", update.effective_user.id)
+
+    try:
+        await update.message.reply_text(
+            "👋 Welcome to the IMEI Checker Bot!\n"
+            "Send /check followed by a 15-digit IMEI number.\n"
+            "Example: `/check 013440001737488`\n"
+            "Payment of $0.32 USD via Payeer is required.\n"
+            f"Visit our website: {WEBSITE_URL}",
+            parse_mode="Markdown"
+        )
+        print("✅ /start message sent successfully.")
+    except Exception as e:
+        print("❌ Error in /start:", str(e))
+
 
 async def check_imei(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
