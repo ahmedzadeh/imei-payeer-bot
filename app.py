@@ -7,7 +7,7 @@ import hashlib
 import uuid
 import asyncio
 import os
-from urllib.parse import urlencode
+from urllib.parse import urlencode, quote_plus
 import base64
 import logging
 
@@ -175,7 +175,7 @@ async def check_imei(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "lang": "en"
     }
 
-    payment_url = f"https://payeer.com/merchant/?{urlencode(payment_data)}"
+    payment_url = PAYEER_PAYMENT_URL + "?" + "&".join(f"{k}={quote_plus(str(v))}" for k, v in payment_data.items())
     logger.info("Generated payment URL: %s", payment_url)
 
     await update.message.reply_text(
@@ -200,7 +200,7 @@ async def send_results(user_id: int, imei: str):
             f"🔹 *Purchase Date:* {data.get('Date of purchase', 'N/A')}",
             f"🔹 *Coverage:* {data.get('Repairs & Service Coverage', 'N/A')}",
             f"🔹 *Is Replaced:* {data.get('is replaced', 'N/A')}",
-            f"🔹 *SIM Lock:* {data.get('SIM Lock', 'N/A')}",
+            f"🔹 *SIM Lock:* {data.get('SIM Lock', 'N/A')}"
         ])
 
         await bot.send_message(chat_id=user_id, text=msg, parse_mode="Markdown")
