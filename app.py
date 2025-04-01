@@ -145,28 +145,14 @@ async def check_imei(update: Update, context: ContextTypes.DEFAULT_TYPE):
     sign_string = f"{PAYEER_MERCHANT_ID}:{order_id}:{amount}:USD:{m_desc}:{PAYEER_SECRET_KEY}"
     m_sign = hashlib.sha256(sign_string.encode()).hexdigest().upper()
 
-    import base64
-
-    description = f"IMEI Check for {imei}"
-    encoded_desc = base64.b64encode(description.encode()).decode()
-
-    sign_str = f"{PAYEER_MERCHANT_ID}:{order_id}:{amount}:USD:{encoded_desc}:{PAYEER_SECRET_KEY}"
-    sign = hashlib.sha256(sign_str.encode()).hexdigest().upper()
-
     payment_data = {
         "m_shop": PAYEER_MERCHANT_ID,
         "m_orderid": order_id,
         "m_amount": amount,
         "m_curr": "USD",
-        "m_desc": encoded_desc,
-        "m_sign": sign,
+        "m_desc": m_desc,
+        "m_sign": m_sign,
         "m_status_url": f"{BASE_URL}/payeer",
-        "m_success_url": f"{BASE_URL}/success",
-        "m_fail_url": f"{BASE_URL}/fail"
-    }/payeer",
-        "m_success_url": f"{BASE_URL}/success",
-        "m_fail_url": f"{BASE_URL}/fail"
-    }/payeer",
         "m_success_url": f"{BASE_URL}/success",
         "m_fail_url": f"{BASE_URL}/fail",
         "lang": "en"
