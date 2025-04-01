@@ -22,18 +22,8 @@ IMEI_API_URL = "https://proimei.info/en/prepaid/api"
 PAYEER_PAYMENT_URL = "https://payeer.com/merchant/"
 
 app = Flask(__name__)
-
-# Create and set global event loop
 loop = asyncio.new_event_loop()
 asyncio.set_event_loop(loop)
-
-# Create Telegram app
-application = Application.builder().token(TOKEN).build()
-bot = application.bot
-application.add_handler(CommandHandler("start", start))
-application.add_handler(CommandHandler("check", check_imei))
-loop.run_until_complete(application.initialize())
-
 
 # Init DB
 def init_db():
@@ -110,7 +100,6 @@ def fail():
 # Handlers
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     print("📥 /start handler triggered by", update.effective_user.id)
-
     try:
         await update.message.reply_text(
             "👋 Welcome to the IMEI Checker Bot!\n"
@@ -123,7 +112,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         print("✅ /start message sent successfully.")
     except Exception as e:
         print("❌ Error in /start:", str(e))
-
 
 async def check_imei(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
@@ -187,6 +175,13 @@ async def send_results(user_id: int, imei: str):
         await bot.send_message(chat_id=user_id, text=msg, parse_mode="Markdown")
     except Exception as e:
         await bot.send_message(chat_id=user_id, text=f"❌ Failed to fetch IMEI data: {e}")
+
+# Create Telegram app and register handlers AFTER defining functions
+application = Application.builder().token(TOKEN).build()
+bot = application.bot
+application.add_handler(CommandHandler("start", start))
+application.add_handler(CommandHandler("check", check_imei))
+loop.run_until_complete(application.initialize())
 
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 8080))
