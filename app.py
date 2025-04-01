@@ -8,6 +8,7 @@ import uuid
 import asyncio
 import os
 from urllib.parse import urlencode
+import base64
 
 # Configuration
 TOKEN = os.getenv("TOKEN", "8018027330:AAGbqSQ5wQvLj2rPGXQ_MOWU3I8z7iUpjPw")
@@ -61,7 +62,6 @@ def telegram_webhook():
         print("❌ Error processing update:", str(e))
 
     return "OK"
-
 
 @app.route('/payeer', methods=['POST'])
 def payeer_callback():
@@ -140,16 +140,22 @@ async def check_imei(update: Update, context: ContextTypes.DEFAULT_TYPE):
     conn.commit()
     conn.close()
 
+    desc = f"IMEI Check for {imei}"
+    m_desc = base64.b64encode(desc.encode()).decode()
+    sign_string = f"{PAYEER_MERCHANT_ID}:{order_id}:{amount}:USD:{m_desc}:{PAYEER_SECRET_KEY}"
+    m_sign = hashlib.sha256(sign_string.encode()).hexdigest().upper()
+
     payment_data = {
         "m_shop": PAYEER_MERCHANT_ID,
         "m_orderid": order_id,
         "m_amount": amount,
         "m_curr": "USD",
-        "m_desc": f"IMEI Check for {imei}",
-        "m_sign": hashlib.sha256(f"{PAYEER_MERCHANT_ID}:{order_id}:{amount}:USD:{PAYEER_SECRET_KEY}".encode()).hexdigest(),
+        "m_desc": m_desc,
+        "m_sign": m_sign,
         "m_status_url": f"{BASE_URL}/payeer",
         "m_success_url": f"{BASE_URL}/success",
-        "m_fail_url": f"{BASE_URL}/fail"
+        "m_fail_url": f"{BASE_URL}/fail",
+        "lang": "en"
     }
 
     payment_url = f"{PAYEER_PAYMENT_URL}?{urlencode(payment_data)}"
