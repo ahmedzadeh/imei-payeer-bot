@@ -22,7 +22,11 @@ IMEI_API_URL = "https://proimei.info/en/prepaid/api"
 PAYEER_PAYMENT_URL = "https://payeer.com/merchant/"
 
 app = Flask(__name__)
-bot = Bot(TOKEN)
+loop = asyncio.get_event_loop()
+application = Application.builder().token(TOKEN).build()
+application.add_handler(CommandHandler("start", lambda u, c: loop.create_task(start(u, c))))
+application.add_handler(CommandHandler("check", lambda u, c: loop.create_task(check_imei(u, c))))
+bot = application.bot
 
 # Init DB
 def init_db():
@@ -41,7 +45,13 @@ init_db()
 
 @app.route("/")
 def index():
-    return "Bot is running via webhook."
+    return "Bot is running via Flask webhook."
+
+@app.route(f"/{TOKEN}", methods=["POST"])
+def telegram_webhook():
+    update = Update.de_json(request.get_json(force=True), bot)
+    loop.create_task(application.process_update(update))
+    return "OK"
 
 @app.route('/payeer', methods=['POST'])
 def payeer_callback():
@@ -69,7 +79,7 @@ def payeer_callback():
             user_id, imei = result
             c.execute("UPDATE payments SET paid = 1 WHERE order_id = ?", (m_orderid,))
             conn.commit()
-            asyncio.run(send_results(user_id, imei))
+            loop.create_task(send_results(user_id, imei))
             c.execute("DELETE FROM payments WHERE order_id = ?", (m_orderid,))
             conn.commit()
         conn.close()
@@ -160,17 +170,4 @@ async def send_results(user_id: int, imei: str):
 
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 8080))
-    app_url = f"{BASE_URL}/{TOKEN}"
-
-    async def main():
-        app_instance = Application.builder().token(TOKEN).build()
-        app_instance.add_handler(CommandHandler("start", start))
-        app_instance.add_handler(CommandHandler("check", check_imei))
-
-        await app_instance.run_webhook(
-            listen="0.0.0.0",
-            port=port,
-            webhook_url=app_url
-        )
-
-    asyncio.run(main())
+    app.run(host="0.0.0.0", port=port)
