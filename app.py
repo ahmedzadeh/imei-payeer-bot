@@ -141,9 +141,9 @@ async def check_imei(update: Update, context: ContextTypes.DEFAULT_TYPE):
     conn.close()
 
     desc = f"IMEI Check for {imei}"
-    m_desc = base64.b64encode(desc.encode()).decode()
+    m_desc = base64.b64encode(desc.encode()).decode()  # Base64 encode
     sign_string = f"{PAYEER_MERCHANT_ID}:{order_id}:{amount}:USD:{m_desc}:{PAYEER_SECRET_KEY}"
-    m_sign = hashlib.sha256(sign_string.encode()).hexdigest().upper()
+    m_sign = hashlib.sha256(sign_string.encode()).hexdigest().upper()  # UPPERCASE
 
     payment_data = {
         "m_shop": PAYEER_MERCHANT_ID,
