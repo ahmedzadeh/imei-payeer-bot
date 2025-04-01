@@ -50,9 +50,16 @@ def index():
 
 @app.route(f"/{TOKEN}", methods=["POST"])
 def telegram_webhook():
-    update = Update.de_json(request.get_json(force=True), bot)
-    loop.create_task(application.process_update(update))
+    update_json = request.get_json(force=True)
+    print("✅ Webhook called")
+    print("📦 Payload received:", update_json)  # DEBUG LOG
+    try:
+        update = Update.de_json(update_json, bot)
+        application.create_task(application.process_update(update))
+    except Exception as e:
+        print("❌ Error processing update:", str(e))
     return "OK"
+
 
 @app.route('/payeer', methods=['POST'])
 def payeer_callback():
