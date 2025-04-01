@@ -7,7 +7,7 @@ import hashlib
 import uuid
 import asyncio
 import os
-from urllib.parse import urlencode, quote_plus
+from urllib.parse import quote_plus
 import base64
 import logging
 
@@ -15,14 +15,11 @@ import logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
-# Debug message to confirm code version
-logger.info("Running updated code version with correct Payeer parameter names (m_shop, m_orderid, etc.)")
-
 # Configuration
 TOKEN = os.getenv("TOKEN", "8018027330:AAGbqSQ5wQvLj2rPGXQ_MOWU3I8z7iUpjPw")
 IMEI_API_KEY = os.getenv("IMEI_API_KEY", "PKZ-HK5K6HMRFAXE5VZLCNW6L")
 PAYEER_MERCHANT_ID = os.getenv("PAYEER_MERCHANT_ID", "2210021863")
-PAYEER_SECRET_KEY = os.getenv("PAYEER_SECRET_KEY", "123")  # Matches Payeer's testing environment
+PAYEER_SECRET_KEY = os.getenv("PAYEER_SECRET_KEY", "123")
 ADMIN_CHAT_IDS = [os.getenv("ADMIN_CHAT_ID", "6927331058")]
 BASE_URL = "https://api.imeichecks.online"
 WEBSITE_URL = "https://imeichecks.online"
@@ -30,19 +27,11 @@ WEBSITE_URL = "https://imeichecks.online"
 IMEI_API_URL = "https://proimei.info/en/prepaid/api"
 PAYEER_PAYMENT_URL = "https://payeer.com/merchant/"
 
-# Validate environment variables
-if not TOKEN:
-    logger.error("Telegram TOKEN is not set. Please set the TOKEN environment variable.")
-    exit(1)
-if not PAYEER_MERCHANT_ID or not PAYEER_SECRET_KEY:
-    logger.error("Payeer credentials are not set. Please set PAYEER_MERCHANT_ID and PAYEER_SECRET_KEY.")
-    exit(1)
-
 app = Flask(__name__)
 loop = asyncio.new_event_loop()
 asyncio.set_event_loop(loop)
 
-# Initialize Database
+# Init DB
 def init_db():
     conn = sqlite3.connect("payments.db")
     c = conn.cursor()
@@ -57,7 +46,6 @@ def init_db():
 
 init_db()
 
-# Flask Routes
 @app.route("/")
 def index():
     return "Bot is running via Flask webhook."
@@ -122,7 +110,7 @@ def success():
 def fail():
     return "Payment failed. Try again in Telegram."
 
-# Telegram Handlers
+# Handlers
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger.info("/start handler triggered by user %s", update.effective_user.id)
     try:
@@ -134,7 +122,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"Visit our website: {WEBSITE_URL}",
             parse_mode="Markdown"
         )
-        logger.info("/start message sent successfully to user %s", update.effective_user.id)
     except Exception as e:
         logger.error("Error in /start: %s", str(e))
 
@@ -161,9 +148,7 @@ async def check_imei(update: Update, context: ContextTypes.DEFAULT_TYPE):
     desc = f"IMEI Check for {imei}"
     m_desc = base64.b64encode(desc.encode()).decode().strip()
     sign_string = f"{PAYEER_MERCHANT_ID}:{order_id}:{amount}:USD:{m_desc}:{PAYEER_SECRET_KEY}"
-    logger.info("Payeer sign string: %s", sign_string)
     m_sign = hashlib.sha256(sign_string.encode()).hexdigest().upper()
-    logger.info("Generated m_sign: %s", m_sign)
 
     payment_data = {
         "m_shop": PAYEER_MERCHANT_ID,
@@ -172,11 +157,13 @@ async def check_imei(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "m_curr": "USD",
         "m_desc": m_desc,
         "m_sign": m_sign,
+        "m_status_url": f"{BASE_URL}/payeer",
+        "m_success_url": f"{BASE_URL}/success",
+        "m_fail_url": f"{BASE_URL}/fail",
         "lang": "en"
     }
 
-    payment_url = PAYEER_PAYMENT_URL + "?" + "&".join(f"{k}={quote_plus(str(v))}" for k, v in payment_data.items())
-    logger.info("Generated payment URL: %s", payment_url)
+    payment_url = PAYEER_PAYMENT_URL + "?" + "&".join(f"{k}={quote_plus(v)}" for k, v in payment_data.items())
 
     await update.message.reply_text(
         f"💳 Please pay {amount} USD here:\n{payment_url}\nResults will be sent automatically after payment.",
@@ -200,16 +187,14 @@ async def send_results(user_id: int, imei: str):
             f"🔹 *Purchase Date:* {data.get('Date of purchase', 'N/A')}",
             f"🔹 *Coverage:* {data.get('Repairs & Service Coverage', 'N/A')}",
             f"🔹 *Is Replaced:* {data.get('is replaced', 'N/A')}",
-            f"🔹 *SIM Lock:* {data.get('SIM Lock', 'N/A')}"
+            f"🔹 *SIM Lock:* {data.get('SIM Lock', 'N/A')}",
         ])
 
         await bot.send_message(chat_id=user_id, text=msg, parse_mode="Markdown")
-        logger.info("IMEI results sent to user %s", user_id)
     except Exception as e:
-        logger.error("Failed to fetch IMEI data for user %s: %s", user_id, str(e))
         await bot.send_message(chat_id=user_id, text=f"❌ Failed to fetch IMEI data: {e}")
 
-# Initialize Telegram Application
+# Telegram App Init
 application = Application.builder().token(TOKEN).build()
 bot = application.bot
 application.add_handler(CommandHandler("start", start))
