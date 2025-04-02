@@ -1,7 +1,7 @@
 import requests
 import sqlite3
 from flask import Flask, request
-from telegram import Update, Bot, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, Bot
 from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, filters
 import hashlib
 import uuid
@@ -69,7 +69,9 @@ def telegram_webhook():
 
 @app.route('/payeer', methods=['POST'])
 def payeer_callback():
-    data = request.form
+    data = request.form.to_dict()
+    logger.info("Received Payeer callback data: %s", data)
+
     required_fields = ['m_operation_id', 'm_sign', 'm_orderid', 'm_amount', 'm_curr', 'm_status']
     if not all(field in data for field in required_fields):
         logger.error("Invalid callback data: %s", data)
@@ -85,11 +87,17 @@ def payeer_callback():
     sign_string = f"{m_operation_id}:{data.get('m_operation_ps', '')}:{data.get('m_operation_date', '')}:{data.get('m_operation_pay_date', '')}:{PAYEER_MERCHANT_ID}:{m_orderid}:{m_amount}:{m_curr}:{m_status}:{PAYEER_SECRET_KEY}"
     expected_sign = hashlib.sha256(sign_string.encode()).hexdigest()
 
+    if m_sign != expected_sign:
+        logger.warning("❌ Signature mismatch!\nExpected: %s\nReceived: %s", expected_sign, m_sign)
+    if m_status != "success":
+        logger.warning("❌ Payment status is not 'success': %s", m_status)
+
     if m_sign == expected_sign and m_status == "success":
         conn = sqlite3.connect("payments.db")
         c = conn.cursor()
         c.execute("SELECT user_id, imei FROM payments WHERE order_id = ? AND paid = 0", (m_orderid,))
         result = c.fetchone()
+        logger.info("Database lookup result: %s", result)
         if result:
             user_id, imei = result
             c.execute("UPDATE payments SET paid = 1 WHERE order_id = ?", (m_orderid,))
@@ -99,7 +107,6 @@ def payeer_callback():
             conn.commit()
         conn.close()
         return "OK"
-    logger.error("Payment not verified. Expected sign: %s, Received sign: %s", expected_sign, m_sign)
     return "Payment not verified", 400
 
 @app.route('/success')
@@ -166,10 +173,9 @@ async def check_imei(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     logger.info("Generated Payeer payment URL: %s", payment_url)
 
-    keyboard = InlineKeyboardMarkup.from_button(InlineKeyboardButton(text="💳 Pay via Payeer", url=payment_url))
     await update.message.reply_text(
-        f"💳 Please pay {amount} USD using the button below.\nResults will be sent automatically after payment.",
-        reply_markup=keyboard
+        f"💳 Please pay {amount} USD here:\n<code>{payment_url}</code>\nResults will be sent automatically after payment.",
+        parse_mode="HTML"
     )
 
 async def send_results(user_id: int, imei: str):
