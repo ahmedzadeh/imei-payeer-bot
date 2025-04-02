@@ -1,6 +1,6 @@
 import requests
 import sqlite3
-from flask import Flask, request
+from flask import Flask, request, render_template_string
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, Bot
 from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, filters
 import hashlib
@@ -110,7 +110,21 @@ def payeer_callback():
 
 @app.route('/success')
 def success():
-    return "<b>Payment successful! Check Telegram for your results.</b>"
+    m_orderid = request.args.get("m_orderid")
+    message = "✅ Payment successful! Please wait while your IMEI result is being sent to Telegram."
+
+    if m_orderid:
+        conn = sqlite3.connect("payments.db")
+        c = conn.cursor()
+        c.execute("SELECT user_id, imei FROM payments WHERE order_id = ?", (m_orderid,))
+        result = c.fetchone()
+        conn.close()
+        if result:
+            user_id, imei = result
+            message = f"✅ Payment successful! IMEI `{imei}` result is being sent to Telegram."
+            loop.create_task(send_results(user_id, imei))
+
+    return render_template_string("""<html><body><p style='color:lime;font-weight:bold;'>{{ message }}</p></body></html>""", message=message)
 
 @app.route('/fail')
 def fail():
@@ -178,7 +192,7 @@ async def check_imei(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "m_desc": m_desc,
         "m_sign": m_sign,
         "m_status_url": f"{BASE_URL}/payeer",
-        "m_success_url": f"{BASE_URL}/success",
+        "m_success_url": f"{BASE_URL}/success?m_orderid={order_id}",
         "m_fail_url": f"{BASE_URL}/fail",
         "lang": "en"
     }
