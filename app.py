@@ -7,7 +7,7 @@ import hashlib
 import uuid
 import asyncio
 import os
-from urllib.parse import urlencode, quote_plus
+from urllib.parse import urlencode
 import base64
 import logging
 
@@ -91,6 +91,9 @@ def payeer_callback():
     sign_string = f"{m_operation_id}:{m_operation_ps}:{m_operation_date}:{m_operation_pay_date}:{PAYEER_MERCHANT_ID}:{m_orderid}:{m_amount}:{m_curr}:{m_status}:{PAYEER_SECRET_KEY}"
     expected_sign = hashlib.sha256(sign_string.encode()).hexdigest().upper()
 
+    logger.info("Expected signature: %s", expected_sign)
+    logger.info("Received signature: %s", m_sign)
+
     if m_sign == expected_sign and m_status == "success":
         conn = sqlite3.connect("payments.db")
         c = conn.cursor()
@@ -98,6 +101,7 @@ def payeer_callback():
         result = c.fetchone()
         if result:
             user_id, imei = result
+            logger.info("Payment confirmed for user %s and IMEI %s", user_id, imei)
             c.execute("UPDATE payments SET paid = 1 WHERE order_id = ?", (m_orderid,))
             conn.commit()
             loop.create_task(send_results(user_id, imei))
@@ -110,11 +114,11 @@ def payeer_callback():
 
 @app.route('/success')
 def success():
-    return "<b>Payment successful! Check Telegram for your results.</b>"
+    return "<b>✅ Payment successful! Please wait while your IMEI result is being sent to Telegram.</b>"
 
 @app.route('/fail')
 def fail():
-    return "<b>Payment failed. Try again in Telegram.</b>"
+    return "<b>❌ Payment failed. Please try again in Telegram.</b>"
 
 # Handlers
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -170,20 +174,19 @@ async def check_imei(update: Update, context: ContextTypes.DEFAULT_TYPE):
     }
 
     payment_url = f"{PAYEER_PAYMENT_URL}?{urlencode(payment_data)}"
-    logger.info("Generated Payeer payment URL: %s", payment_url)
+    logger.info("Generated Payeer payment URL for user %s: %s", user_id, payment_url)
 
     keyboard = [[InlineKeyboardButton("💳 Pay $0.32 USD", url=payment_url)]]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
     await update.message.reply_text(
-        f"💳 IMEI: {imei} is valid. Please complete the payment.\n\n"
-        f"We are waiting for your payment confirmation. Once received, results will be delivered automatically.",
-        reply_markup=reply_markup
+        f"✅ IMEI: {imei}\n💰 Price: $0.32\nPlease click below to pay:", reply_markup=reply_markup
     )
 
 async def send_results(user_id: int, imei: str):
     params = {"api_key": IMEI_API_KEY, "checker": "simlock2", "number": imei}
     try:
+        logger.info("🔍 Fetching IMEI results for user %s: %s", user_id, imei)
         response = requests.get(IMEI_API_URL, params=params, timeout=10)
         response.raise_for_status()
         data = response.json()
@@ -202,7 +205,9 @@ async def send_results(user_id: int, imei: str):
         ])
 
         await bot.send_message(chat_id=user_id, text=msg, parse_mode="Markdown")
+        logger.info("✅ Sent IMEI results to user %s", user_id)
     except Exception as e:
+        logger.error("❌ Failed to fetch IMEI data for user %s: %s", user_id, str(e))
         await bot.send_message(chat_id=user_id, text=f"❌ Failed to fetch IMEI data: {e}")
 
 # Telegram App Init
