@@ -1,13 +1,12 @@
-import requests
+import aiohttp
 import sqlite3
-from flask import Flask, request
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, Bot
-from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, filters
+from flask import Flask
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import Application, CommandHandler, ContextTypes
 import hashlib
 import uuid
-import asyncio
 import os
-from urllib.parse import urlencode, quote_plus
+from urllib.parse import urlencode
 import base64
 import logging
 
@@ -20,7 +19,6 @@ TOKEN = os.getenv("TOKEN", "8018027330:AAGbqSQ5wQvLj2rPGXQ_MOWU3I8z7iUpjPw")
 IMEI_API_KEY = os.getenv("IMEI_API_KEY", "PKZ-HK5K6HMRFAXE5VZLCNW6L")
 PAYEER_MERCHANT_ID = os.getenv("PAYEER_MERCHANT_ID", "2210021863")
 PAYEER_SECRET_KEY = os.getenv("PAYEER_SECRET_KEY", "123")
-ADMIN_CHAT_IDS = [os.getenv("ADMIN_CHAT_ID", "6927331058")]
 BASE_URL = "https://api.imeichecks.online"
 WEBSITE_URL = "https://imeichecks.online"
 
@@ -28,8 +26,6 @@ IMEI_API_URL = "https://proimei.info/en/prepaid/api"
 PAYEER_PAYMENT_URL = "https://payeer.com/merchant/"
 
 app = Flask(__name__)
-loop = asyncio.new_event_loop()
-asyncio.set_event_loop(loop)
 
 # Init DB
 def init_db():
@@ -46,29 +42,11 @@ def init_db():
 
 init_db()
 
-@app.route("/")
-def index():
-    return "Bot is running via Flask webhook."
-
-@app.route(f"/{TOKEN}", methods=["POST"])
-def telegram_webhook():
-    update_json = request.get_json(force=True)
-    logger.info("Webhook called with payload: %s", update_json)
-
-    try:
-        update = Update.de_json(update_json, bot)
-
-        async def handle():
-            await application.process_update(update)
-
-        loop.run_until_complete(handle())
-    except Exception as e:
-        logger.error("Error processing update: %s", str(e))
-
-    return "OK"
+# Telegram App Init
+application = Application.builder().token(TOKEN).build()
 
 @app.route('/payeer', methods=['POST'])
-def payeer_callback():
+async def payeer_callback():
     data = request.form
     logger.info("Received Payeer callback data: %s", data)
 
@@ -85,10 +63,15 @@ def payeer_callback():
     m_orderid = data['m_orderid']
     m_amount = data['m_amount']
     m_curr = data['m_curr']
+    m_desc = data.get('m_desc', '')
     m_status = data['m_status']
     m_sign = data['m_sign']
+    m_params = data.get('m_params', '')
 
-    sign_string = f"{m_operation_id}:{m_operation_ps}:{m_operation_date}:{m_operation_pay_date}:{PAYEER_MERCHANT_ID}:{m_orderid}:{m_amount}:{m_curr}:{m_status}:{PAYEER_SECRET_KEY}"
+    sign_string = f"{m_operation_id}:{m_operation_ps}:{m_operation_date}:{m_operation_pay_date}:{PAYEER_MERCHANT_ID}:{m_orderid}:{m_amount}:{m_curr}:{m_desc}:{m_status}"
+    if m_params:
+        sign_string += f":{m_params}"
+    sign_string += f":{PAYEER_SECRET_KEY}"
     expected_sign = hashlib.sha256(sign_string.encode()).hexdigest().upper()
 
     if m_sign == expected_sign and m_status == "success":
@@ -100,12 +83,10 @@ def payeer_callback():
             user_id, imei = result
             c.execute("UPDATE payments SET paid = 1 WHERE order_id = ?", (m_orderid,))
             conn.commit()
-            loop.create_task(send_results(user_id, imei))
-            c.execute("DELETE FROM payments WHERE order_id = ?", (m_orderid,))
-            conn.commit()
+            await send_results(user_id, imei)
         conn.close()
         return "OK"
-    logger.warning("❌ Signature mismatch!\n\nExpected: %s\n\nReceived: %s", expected_sign, m_sign)
+    logger.warning("❌ Signature mismatch!\n\nSign string: %s\n\nExpected: %s\n\nReceived: %s", sign_string, expected_sign, m_sign)
     return "Payment not verified", 400
 
 @app.route('/success')
@@ -116,20 +97,16 @@ def success():
 def fail():
     return "<b>Payment failed. Try again in Telegram.</b>"
 
-# Handlers
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger.info("/start handler triggered by user %s", update.effective_user.id)
-    try:
-        await update.message.reply_text(
-            "👋 Welcome to the IMEI Checker Bot!\n"
-            "Send /check followed by a 15-digit IMEI number.\n"
-            "Example: `/check 013440001737488`\n"
-            "Payment of $0.32 USD via Payeer is required.\n"
-            f"Visit our website: {WEBSITE_URL}",
-            parse_mode="Markdown"
-        )
-    except Exception as e:
-        logger.error("Error in /start: %s", str(e))
+    await update.message.reply_text(
+        "👋 Welcome to the IMEI Checker Bot!\n"
+        "Send /check followed by a 15-digit IMEI number.\n"
+        "Example: `/check 013440001737488`\n"
+        "Payment of $0.32 USD via Payeer is required.\n"
+        f"Visit our website: {WEBSITE_URL}",
+        parse_mode="Markdown"
+    )
 
 async def check_imei(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
@@ -182,9 +159,10 @@ async def check_imei(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def send_results(user_id: int, imei: str):
     params = {"api_key": IMEI_API_KEY, "checker": "simlock2", "number": imei}
     try:
-        response = requests.get(IMEI_API_URL, params=params, timeout=10)
-        response.raise_for_status()
-        data = response.json()
+        async with aiohttp.ClientSession() as session:
+            async with session.get(IMEI_API_URL, params=params, timeout=10) as response:
+                response.raise_for_status()
+                data = await response.json()
 
         msg = "\n".join([
             "📱 *IMEI Info:*",
@@ -199,19 +177,26 @@ async def send_results(user_id: int, imei: str):
             f"🔹 *SIM Lock:* {data.get('SIM Lock', 'N/A')}",
         ])
 
-        await bot.send_message(chat_id=user_id, text=msg, parse_mode="Markdown")
-    except Exception as e:
-        await bot.send_message(chat_id=user_id, text=f"❌ Failed to fetch IMEI data: {e}")
+        await application.bot.send_message(chat_id=user_id, text=msg, parse_mode="Markdown")
 
-# Telegram App Init
-application = Application.builder().token(TOKEN).build()
-bot = application.bot
+        # Delete the record after successfully sending the results
+        conn = sqlite3.connect("payments.db")
+        c = conn.cursor()
+        c.execute("DELETE FROM payments WHERE user_id = ? AND imei = ?", (user_id, imei))
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        logger.error("Failed to fetch IMEI data for user %s, IMEI %s: %s", user_id, imei, str(e))
+        await application.bot.send_message(chat_id=user_id, text=f"❌ Failed to fetch IMEI data: {e}")
+
+# Add handlers
 application.add_handler(CommandHandler("start", start))
 application.add_handler(CommandHandler("check", check_imei))
-application.add_handler(MessageHandler(filters.ALL, lambda u, c: logger.info("Caught unmatched update from user: %s", u.effective_user.id)))
-loop.run_until_complete(application.initialize())
 
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 8080))
     logger.info("Starting Flask app on port %s", port)
+    # Run Flask app with asyncio support
+    from aioflask import Flask as AioFlask
+    app = AioFlask(__name__)
     app.run(host="0.0.0.0", port=port)
