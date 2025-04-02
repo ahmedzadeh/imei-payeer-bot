@@ -1,13 +1,13 @@
 import requests
 import sqlite3
 from flask import Flask, request
-from telegram import Update, Bot, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, Bot
 from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, filters
 import hashlib
 import uuid
 import asyncio
 import os
-from urllib.parse import quote_plus
+from urllib.parse import urlencode, quote_plus
 import base64
 import logging
 
@@ -69,7 +69,7 @@ def telegram_webhook():
 
 @app.route('/payeer', methods=['POST'])
 def payeer_callback():
-    data = request.form.to_dict()
+    data = request.form
     logger.info("Received Payeer callback data: %s", data)
 
     required_fields = ['m_operation_id', 'm_sign', 'm_orderid', 'm_amount', 'm_curr', 'm_status']
@@ -78,26 +78,24 @@ def payeer_callback():
         return "Invalid callback data", 400
 
     m_operation_id = data['m_operation_id']
-    m_sign = data['m_sign']
+    m_operation_ps = data.get('m_operation_ps', '')
+    m_operation_date = data.get('m_operation_date', '')
+    m_operation_pay_date = data.get('m_operation_pay_date', '')
+    m_shop = data.get('m_shop', '')
     m_orderid = data['m_orderid']
     m_amount = data['m_amount']
     m_curr = data['m_curr']
     m_status = data['m_status']
+    m_sign = data['m_sign']
 
-    sign_string = f"{m_operation_id}:{data.get('m_operation_ps', '')}:{data.get('m_operation_date', '')}:{data.get('m_operation_pay_date', '')}:{PAYEER_MERCHANT_ID}:{m_orderid}:{m_amount}:{m_curr}:{m_status}:{PAYEER_SECRET_KEY}"
-    expected_sign = hashlib.sha256(sign_string.encode()).hexdigest()
-
-    if m_sign != expected_sign:
-        logger.warning("❌ Signature mismatch!\nExpected: %s\nReceived: %s", expected_sign, m_sign)
-    if m_status != "success":
-        logger.warning("❌ Payment status is not 'success': %s", m_status)
+    sign_string = f"{m_operation_id}:{m_operation_ps}:{m_operation_date}:{m_operation_pay_date}:{PAYEER_MERCHANT_ID}:{m_orderid}:{m_amount}:{m_curr}:{m_status}:{PAYEER_SECRET_KEY}"
+    expected_sign = base64.b64encode(hashlib.sha256(sign_string.encode()).digest()).decode()
 
     if m_sign == expected_sign and m_status == "success":
         conn = sqlite3.connect("payments.db")
         c = conn.cursor()
         c.execute("SELECT user_id, imei FROM payments WHERE order_id = ? AND paid = 0", (m_orderid,))
         result = c.fetchone()
-        logger.info("Database lookup result: %s", result)
         if result:
             user_id, imei = result
             c.execute("UPDATE payments SET paid = 1 WHERE order_id = ?", (m_orderid,))
@@ -107,15 +105,16 @@ def payeer_callback():
             conn.commit()
         conn.close()
         return "OK"
+    logger.warning("❌ Signature mismatch!\n\nExpected: %s\n\nReceived: %s", expected_sign, m_sign)
     return "Payment not verified", 400
 
 @app.route('/success')
 def success():
-    return "Payment successful! Check Telegram for your results."
+    return "<b>Payment successful! Check Telegram for your results.</b>"
 
 @app.route('/fail')
 def fail():
-    return "Payment failed. Try again in Telegram."
+    return "<b>Payment failed. Try again in Telegram.</b>"
 
 # Handlers
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -157,28 +156,27 @@ async def check_imei(update: Update, context: ContextTypes.DEFAULT_TYPE):
     sign_string = f"{PAYEER_MERCHANT_ID}:{order_id}:{amount}:USD:{m_desc}:{PAYEER_SECRET_KEY}"
     m_sign = hashlib.sha256(sign_string.encode()).hexdigest().upper()
 
-    payment_url = (
-        f"{PAYEER_PAYMENT_URL}?"
-        f"m_shop={PAYEER_MERCHANT_ID}"
-        f"&m_orderid={order_id}"
-        f"&m_amount={amount}"
-        f"&m_curr=USD"
-        f"&m_desc={m_desc}"
-        f"&m_sign={m_sign}"
-        f"&m_status_url={BASE_URL}/payeer"
-        f"&m_success_url={BASE_URL}/success"
-        f"&m_fail_url={BASE_URL}/fail"
-        f"&lang=en"
-    )
+    payment_data = {
+        "m_shop": PAYEER_MERCHANT_ID,
+        "m_orderid": order_id,
+        "m_amount": amount,
+        "m_curr": "USD",
+        "m_desc": m_desc,
+        "m_sign": m_sign,
+        "m_status_url": f"{BASE_URL}/payeer",
+        "m_success_url": f"{BASE_URL}/success",
+        "m_fail_url": f"{BASE_URL}/fail",
+        "lang": "en"
+    }
 
+    payment_url = f"{PAYEER_PAYMENT_URL}?{urlencode(payment_data)}"
     logger.info("Generated Payeer payment URL: %s", payment_url)
 
-    button = [[InlineKeyboardButton("💳 Pay $0.32 via Payeer", url=payment_url)]]
-    markup = InlineKeyboardMarkup(button)
+    keyboard = [[InlineKeyboardButton("💳 Pay $0.32 USD", url=payment_url)]]
+    reply_markup = InlineKeyboardMarkup(keyboard)
 
     await update.message.reply_text(
-        "Click the button below to complete the payment:",
-        reply_markup=markup
+        "💳 Please pay $0.32 to receive IMEI results:", reply_markup=reply_markup
     )
 
 async def send_results(user_id: int, imei: str):
