@@ -1,7 +1,7 @@
 import requests
 import sqlite3
 from flask import Flask, request
-from telegram import Update, Bot
+from telegram import Update, Bot, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, filters
 import hashlib
 import uuid
@@ -173,9 +173,12 @@ async def check_imei(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     logger.info("Generated Payeer payment URL: %s", payment_url)
 
+    button = [[InlineKeyboardButton("💳 Pay $0.32 via Payeer", url=payment_url)]]
+    markup = InlineKeyboardMarkup(button)
+
     await update.message.reply_text(
-        f"💳 Please pay {amount} USD here:\n<code>{payment_url}</code>\nResults will be sent automatically after payment.",
-        parse_mode="HTML"
+        "Click the button below to complete the payment:",
+        reply_markup=markup
     )
 
 async def send_results(user_id: int, imei: str):
