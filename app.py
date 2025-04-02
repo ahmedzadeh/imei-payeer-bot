@@ -101,8 +101,11 @@ def payeer_callback():
             c.execute("UPDATE payments SET paid = 1 WHERE order_id = ?", (m_orderid,))
             conn.commit()
             loop.create_task(send_results(user_id, imei))
+            logger.info(f"✅ Payment confirmed for IMEI {imei}, sending result to user {user_id}")
             c.execute("DELETE FROM payments WHERE order_id = ?", (m_orderid,))
             conn.commit()
+        else:
+            logger.warning(f"⚠️ Payment callback received but order ID {m_orderid} not found or already paid")
         conn.close()
         return "OK"
     logger.warning("❌ Signature mismatch!\n\nExpected: %s\n\nReceived: %s", expected_sign, m_sign)
@@ -114,6 +117,7 @@ def success():
     message = "✅ Payment successful! Please wait while your IMEI result is being sent to Telegram."
 
     if m_orderid:
+        logger.info(f"/success triggered with m_orderid: {m_orderid}")
         conn = sqlite3.connect("payments.db")
         c = conn.cursor()
         c.execute("SELECT user_id, imei FROM payments WHERE order_id = ?", (m_orderid,))
@@ -123,6 +127,9 @@ def success():
             user_id, imei = result
             message = f"✅ Payment successful! IMEI `{imei}` result is being sent to Telegram."
             loop.create_task(send_results(user_id, imei))
+            logger.info(f"✅ /success triggered sending result for IMEI {imei} to user {user_id}")
+        else:
+            logger.warning(f"⚠️ /success: Order ID {m_orderid} not found in database")
 
     return render_template_string("""<html><body><p style='color:lime;font-weight:bold;'>{{ message }}</p></body></html>""", message=message)
 
