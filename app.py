@@ -176,7 +176,9 @@ async def check_imei(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reply_markup = InlineKeyboardMarkup(keyboard)
 
     await update.message.reply_text(
-        "💳 Please pay $0.32 to receive IMEI results:", reply_markup=reply_markup
+        f"💳 IMEI: {imei} is valid. Please complete the payment.\n\n"
+        f"We are waiting for your payment confirmation. Once received, results will be delivered automatically.",
+        reply_markup=reply_markup
     )
 
 async def send_results(user_id: int, imei: str):
