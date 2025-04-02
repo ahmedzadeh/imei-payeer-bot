@@ -81,7 +81,6 @@ def payeer_callback():
     m_operation_ps = data.get('m_operation_ps', '')
     m_operation_date = data.get('m_operation_date', '')
     m_operation_pay_date = data.get('m_operation_pay_date', '')
-    m_shop = data.get('m_shop', '')
     m_orderid = data['m_orderid']
     m_amount = data['m_amount']
     m_curr = data['m_curr']
@@ -89,7 +88,7 @@ def payeer_callback():
     m_sign = data['m_sign']
 
     sign_string = f"{m_operation_id}:{m_operation_ps}:{m_operation_date}:{m_operation_pay_date}:{PAYEER_MERCHANT_ID}:{m_orderid}:{m_amount}:{m_curr}:{m_status}:{PAYEER_SECRET_KEY}"
-    expected_sign = base64.b64encode(hashlib.sha256(sign_string.encode()).digest()).decode()
+    expected_sign = hashlib.sha256(sign_string.encode()).hexdigest().upper()
 
     if m_sign == expected_sign and m_status == "success":
         conn = sqlite3.connect("payments.db")
@@ -169,7 +168,7 @@ async def check_imei(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "lang": "en"
     }
 
-    payment_url = f"{PAYEER_PAYMENT_URL}?{urlencode(payment_data)}"
+    payment_url = f"{PAYEER_PAYMENT_URL}?" + "&".join(f"{key}={quote_plus(str(value))}" for key, value in payment_data.items())
     logger.info("Generated Payeer payment URL: %s", payment_url)
 
     keyboard = [[InlineKeyboardButton("💳 Pay $0.32 USD", url=payment_url)]]
