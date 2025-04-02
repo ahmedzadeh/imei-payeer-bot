@@ -81,6 +81,7 @@ def payeer_callback():
     m_operation_ps = data.get('m_operation_ps', '')
     m_operation_date = data.get('m_operation_date', '')
     m_operation_pay_date = data.get('m_operation_pay_date', '')
+    m_shop = data.get('m_shop', '')
     m_orderid = data['m_orderid']
     m_amount = data['m_amount']
     m_curr = data['m_curr']
@@ -168,7 +169,7 @@ async def check_imei(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "lang": "en"
     }
 
-    payment_url = f"{PAYEER_PAYMENT_URL}?" + "&".join(f"{key}={quote_plus(str(value))}" for key, value in payment_data.items())
+    payment_url = f"{PAYEER_PAYMENT_URL}?{urlencode(payment_data)}"
     logger.info("Generated Payeer payment URL: %s", payment_url)
 
     keyboard = [[InlineKeyboardButton("💳 Pay $0.32 USD", url=payment_url)]]
