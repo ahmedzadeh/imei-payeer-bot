@@ -1,17 +1,16 @@
 import requests
 import sqlite3
 from flask import Flask, request, render_template_string, jsonify
-from telegram import Update, Bot, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
+from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup
 import hashlib
 import uuid
-import asyncio
 import os
 import threading
 from urllib.parse import urlencode
 import base64
 import logging
 import time
+import traceback
 
 # Set up logging
 logging.basicConfig(
@@ -110,6 +109,7 @@ def send_imei_results(user_id, imei):
     except Exception as e:
         error_msg = f"❌ Error fetching IMEI data: {str(e)}"
         logger.error(f"Error sending results to user {user_id}: {str(e)}")
+        logger.error(traceback.format_exc())
         
         try:
             bot.send_message(chat_id=user_id, text=error_msg)
@@ -128,6 +128,17 @@ def send_imei_results(user_id, imei):
         
         return False
 
+# Set webhook for Telegram
+def set_webhook():
+    """Set the webhook for the bot"""
+    try:
+        webhook_url = f"{BASE_URL}/{TOKEN}"
+        bot.set_webhook(url=webhook_url)
+        logger.info(f"Webhook set to {webhook_url}")
+    except Exception as e:
+        logger.error(f"Failed to set webhook: {str(e)}")
+        logger.error(traceback.format_exc())
+
 # Flask routes
 @app.route("/")
 def index():
@@ -136,6 +147,102 @@ def index():
 @app.route("/health")
 def health_check():
     return jsonify({"status": "ok", "timestamp": time.time()})
+
+@app.route(f"/{TOKEN}", methods=["POST"])
+def telegram_webhook():
+    """Handle incoming Telegram webhook updates"""
+    try:
+        update_json = request.get_json(force=True)
+        logger.info(f"Received Telegram update: {update_json}")
+        
+        # Process the update manually
+        if 'message' in update_json:
+            chat_id = update_json['message']['chat']['id']
+            text = update_json.get('message', {}).get('text', '')
+            
+            # Handle commands manually
+            if text.startswith('/start'):
+                bot.send_message(
+                    chat_id=chat_id,
+                    text="👋 Welcome to the IMEI Checker Bot!\n\nI can check detailed information about any device using its IMEI number.\n\nTo use me, send the /check command followed by a 15-digit IMEI number.\nExample: /check 013440001737488\n\nA payment of $0.32 USD via Payeer is required for each check.",
+                    parse_mode="Markdown"
+                )
+            elif text.startswith('/check'):
+                parts = text.split()
+                if len(parts) < 2:
+                    bot.send_message(
+                        chat_id=chat_id,
+                        text="❌ Please provide an IMEI number.\nExample: /check 013440001737488",
+                        parse_mode="Markdown"
+                    )
+                else:
+                    imei = parts[1]
+                    if not imei.isdigit() or len(imei) != 15:
+                        bot.send_message(
+                            chat_id=chat_id,
+                            text="❌ Invalid IMEI format. IMEI should be a 15-digit number.",
+                            parse_mode="Markdown"
+                        )
+                    else:
+                        # Process IMEI check
+                        order_id = str(uuid.uuid4())
+                        
+                        # Create payment record
+                        with sqlite3.connect("payments.db") as conn:
+                            c = conn.cursor()
+                            c.execute(
+                                "INSERT INTO payments (order_id, user_id, imei, amount, currency, paid) VALUES (?, ?, ?, ?, ?, ?)",
+                                (order_id, chat_id, imei, PRICE, "USD", False)
+                            )
+                            conn.commit()
+                        
+                        # Generate payment link
+                        desc = f"IMEI Check for {imei}"
+                        m_desc = base64.b64encode(desc.encode()).decode()
+                        
+                        sign_string = f"{PAYEER_MERCHANT_ID}:{order_id}:{PRICE}:USD:{m_desc}:{PAYEER_SECRET_KEY}"
+                        m_sign = hashlib.sha256(sign_string.encode()).hexdigest().upper()
+                        
+                        payment_data = {
+                            "m_shop": PAYEER_MERCHANT_ID,
+                            "m_orderid": order_id,
+                            "m_amount": PRICE,
+                            "m_curr": "USD",
+                            "m_desc": m_desc,
+                            "m_sign": m_sign,
+                            "m_status_url": f"{BASE_URL}/payeer",
+                            "m_success_url": f"{BASE_URL}/success?m_orderid={order_id}",
+                            "m_fail_url": f"{BASE_URL}/fail"
+                        }
+                        
+                        payment_url = f"{PAYEER_PAYMENT_URL}?{urlencode(payment_data)}"
+                        logger.info(f"Generated payment URL for order {order_id}: {payment_url}")
+                        
+                        keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("💳 Pay $0.32 USD", url=payment_url)]])
+                        
+                        bot.send_message(
+                            chat_id=chat_id,
+                            text=f"📱 IMEI: {imei}\n\nTo receive detailed information about this device, please complete the payment.\n\n💰 Price: ${PRICE} USD",
+                            reply_markup=keyboard,
+                            parse_mode="Markdown"
+                        )
+            elif text.startswith('/help'):
+                bot.send_message(
+                    chat_id=chat_id,
+                    text="🔍 *IMEI Check Bot Help*\n\nThis bot allows you to check detailed information about any device using its IMEI number.\n\n*Commands:*\n/start - Start the bot\n/check IMEI - Check an IMEI number\n/help - Show this help message\n\n*How to use:*\n1. Send /check followed by a 15-digit IMEI number\n2. Complete the payment ($0.32 USD)\n3. Receive detailed device information\n\n*Example:* /check 013440001737488",
+                    parse_mode="Markdown"
+                )
+            else:
+                bot.send_message(
+                    chat_id=chat_id,
+                    text="I don't understand that command. Please use /help to see available commands."
+                )
+        
+        return "OK"
+    except Exception as e:
+        logger.error(f"Error processing webhook: {str(e)}")
+        logger.error(traceback.format_exc())
+        return f"Error: {str(e)}", 500
 
 @app.route('/payeer', methods=['POST'])
 def payeer_callback():
@@ -208,13 +315,14 @@ def payeer_callback():
             return "OK", 200
     except Exception as e:
         logger.error(f"Error processing payment: {str(e)}")
+        logger.error(traceback.format_exc())
         return f"Error: {str(e)}", 500
 
 @app.route('/success')
 def success():
     m_orderid = request.args.get("m_orderid")
     message = "✅ Payment successful! Your IMEI result will be sent to you in Telegram shortly."
-    
+
     if m_orderid:
         logger.info(f"Success page visited for order {m_orderid}")
         try:
@@ -222,69 +330,43 @@ def success():
                 c = conn.cursor()
                 c.execute("SELECT user_id, imei, paid FROM payments WHERE order_id = ?", (m_orderid,))
                 result = c.fetchone()
-                
+
                 if result:
                     user_id, imei, paid = result
                     if not paid:
-                        # This is a manual check - the webhook might not have been called yet
-                        logger.info(f"Manual check for order {m_orderid} - not marked as paid yet")
-                        message = f"✅ Payment successful! Your IMEI {imei} result will be sent to you in Telegram shortly."
-                        
-                        # Try to send results anyway (as a backup)
+                        logger.info(f"Manual check for unpaid order {m_orderid}. Sending IMEI result.")
                         threading.Thread(target=send_imei_results, args=(int(user_id), imei)).start()
-                        
-                        # Mark as paid
                         c.execute("UPDATE payments SET paid = 1 WHERE order_id = ?", (m_orderid,))
                         conn.commit()
+                        message = f"✅ Payment successful! Your IMEI `{imei}` result is being processed and will be sent to you via Telegram."
                     else:
-                        message = f"✅ Payment already processed! Your IMEI {imei} result has been sent to you in Telegram."
+                        message = f"✅ Payment already processed. IMEI `{imei}` result was previously sent."
                 else:
-                    logger.warning(f"Order {m_orderid} not found in database")
+                    logger.warning(f"Order ID {m_orderid} not found in database.")
+                    message = "⚠️ Order not found. Please contact support if you think this is a mistake."
         except Exception as e:
-            logger.error(f"Error in success page: {str(e)}")
-    
+            logger.error(f"Error handling /success page: {str(e)}")
+            logger.error(traceback.format_exc())
+            message = "❌ An error occurred while verifying your payment. Please contact support."
+
     return render_template_string("""
     <!DOCTYPE html>
     <html>
     <head>
-        <title>Payment Successful</title>
+        <title>Payment Success</title>
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <style>
-            body {
-                font-family: Arial, sans-serif;
-                text-align: center;
-                padding: 20px;
-                background-color: #f5f5f5;
-            }
-            .container {
-                max-width: 600px;
-                margin: 0 auto;
-                background-color: white;
-                padding: 20px;
-                border-radius: 10px;
-                box-shadow: 0 2px 10px rgba(0,0,0,0.1);
-            }
-            .success {
-                color: #4CAF50;
-                font-weight: bold;
-                font-size: 18px;
-            }
-            .back-button {
-                display: inline-block;
-                margin-top: 20px;
-                padding: 10px 20px;
-                background-color: #4CAF50;
-                color: white;
-                text-decoration: none;
-                border-radius: 5px;
-            }
+            body { font-family: Arial, sans-serif; text-align: center; padding: 40px; background: #f0f0f0; }
+            .box { background: white; padding: 30px; border-radius: 10px; max-width: 600px; margin: auto; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+            .success { color: #4CAF50; font-weight: bold; font-size: 20px; }
+            a { text-decoration: none; color: white; background: #4CAF50; padding: 10px 20px; border-radius: 5px; display: inline-block; margin-top: 20px; }
         </style>
     </head>
     <body>
-        <div class="container">
-            <h1>Payment Successful</h1>
+        <div class="box">
+            <h2>Payment Confirmed</h2>
             <p class="success">{{ message }}</p>
-            <a href="https://t.me/your_bot_username" class="back-button">Return to Telegram Bot</a>
+            <a href="https://t.me/your_bot_username">Return to Telegram Bot</a>
         </div>
     </body>
     </html>
@@ -299,248 +381,23 @@ def fail():
         <title>Payment Failed</title>
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <style>
-            body {
-                font-family: Arial, sans-serif;
-                text-align: center;
-                padding: 20px;
-                background-color: #f5f5f5;
-            }
-            .container {
-                max-width: 600px;
-                margin: 0 auto;
-                background-color: white;
-                padding: 20px;
-                border-radius: 10px;
-                box-shadow: 0 2px 10px rgba(0,0,0,0.1);
-            }
-            .fail {
-                color: #f44336;
-                font-weight: bold;
-                font-size: 18px;
-            }
-            .back-button {
-                display: inline-block;
-                margin-top: 20px;
-                padding: 10px 20px;
-                background-color: #4CAF50;
-                color: white;
-                text-decoration: none;
-                border-radius: 5px;
-            }
+            body { font-family: Arial, sans-serif; text-align: center; padding: 40px; background: #f0f0f0; }
+            .box { background: white; padding: 30px; border-radius: 10px; max-width: 600px; margin: auto; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+            .fail { color: #f44336; font-weight: bold; font-size: 20px; }
+            a { text-decoration: none; color: white; background: #f44336; padding: 10px 20px; border-radius: 5px; display: inline-block; margin-top: 20px; }
         </style>
     </head>
     <body>
-        <div class="container">
-            <h1>Payment Failed</h1>
+        <div class="box">
+            <h2>Payment Failed</h2>
             <p class="fail">Your payment was not successful. Please try again in Telegram.</p>
-            <a href="https://t.me/your_bot_username" class="back-button">Return to Telegram Bot</a>
+            <a href="https://t.me/your_bot_username">Return to Telegram Bot</a>
         </div>
     </body>
     </html>
     """)
 
-# Debug routes
-@app.route('/debug/payments')
-def debug_payments():
-    if request.args.get('key') != PAYEER_SECRET_KEY:
-        return "Unauthorized", 401
-    
-    try:
-        with sqlite3.connect("payments.db") as conn:
-            c = conn.cursor()
-            c.execute("SELECT * FROM payments ORDER BY created_at DESC LIMIT 20")
-            payments = c.fetchall()
-            return jsonify({"payments": payments})
-    except Exception as e:
-        return jsonify({"error": str(e)})
-
-@app.route('/debug/imei/<imei>')
-def debug_imei(imei):
-    if request.args.get('key') != PAYEER_SECRET_KEY:
-        return "Unauthorized", 401
-    
-    params = {"api_key": IMEI_API_KEY, "checker": "simlock2", "number": imei}
-    try:
-        response = requests.get(IMEI_API_URL, params=params, timeout=15)
-        response.raise_for_status()
-        data = response.json()
-        return jsonify(data)
-    except Exception as e:
-        return jsonify({"error": str(e)})
-
-# Telegram bot handlers
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    logger.info(f"Start command from user {update.effective_user.id}")
-    await update.message.reply_text(
-        "👋 Welcome to the IMEI Checker Bot!\n\n"
-        "I can check detailed information about any device using its IMEI number.\n\n"
-        "To use me, send the /check command followed by a 15-digit IMEI number.\n"
-        "Example: `/check 013440001737488`\n\n"
-        "A payment of $0.32 USD via Payeer is required for each check.",
-        parse_mode="Markdown"
-    )
-
-async def check_imei(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    logger.info(f"Check command from user {update.effective_user.id}")
-    
-    if not context.args:
-        await update.message.reply_text("❌ Please provide an IMEI number.\nExample: `/check 013440001737488`", parse_mode="Markdown")
-        return
-    
-    imei = context.args[0]
-    if not imei.isdigit() or len(imei) != 15:
-        await update.message.reply_text("❌ Invalid IMEI format. IMEI should be a 15-digit number.", parse_mode="Markdown")
-        return
-    
-    user_id = update.effective_user.id
-    order_id = str(uuid.uuid4())
-    
-    # Create payment record
-    try:
-        with sqlite3.connect("payments.db") as conn:
-            c = conn.cursor()
-            c.execute(
-                "INSERT INTO payments (order_id, user_id, imei, amount, currency, paid) VALUES (?, ?, ?, ?, ?, ?)",
-                (order_id, user_id, imei, PRICE, "USD", False)
-            )
-            conn.commit()
-    except Exception as e:
-        logger.error(f"Database error: {e}")
-        await update.message.reply_text("❌ An error occurred. Please try again later.")
-        return
-    
-    # Generate payment link
-    desc = f"IMEI Check for {imei}"
-    m_desc = base64.b64encode(desc.encode()).decode()
-    
-    sign_string = f"{PAYEER_MERCHANT_ID}:{order_id}:{PRICE}:USD:{m_desc}:{PAYEER_SECRET_KEY}"
-    m_sign = hashlib.sha256(sign_string.encode()).hexdigest().upper()
-    
-    payment_data = {
-        "m_shop": PAYEER_MERCHANT_ID,
-        "m_orderid": order_id,
-        "m_amount": PRICE,
-        "m_curr": "USD",
-        "m_desc": m_desc,
-        "m_sign": m_sign,
-        "m_status_url": f"{BASE_URL}/payeer",
-        "m_success_url": f"{BASE_URL}/success?m_orderid={order_id}",
-        "m_fail_url": f"{BASE_URL}/fail"
-    }
-    
-    payment_url = f"{PAYEER_PAYMENT_URL}?{urlencode(payment_data)}"
-    logger.info(f"Generated payment URL for order {order_id}: {payment_url}")
-    
-    keyboard = [[InlineKeyboardButton("💳 Pay $0.32 USD", url=payment_url)]]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    await update.message.reply_text(
-        f"📱 IMEI: `{imei}`\n\n"
-        f"To receive detailed information about this device, please complete the payment.\n\n"
-        f"💰 Price: ${PRICE} USD",
-        reply_markup=reply_markup,
-        parse_mode="Markdown"
-    )
-
-async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "🔍 *IMEI Check Bot Help*\n\n"
-        "This bot allows you to check detailed information about any device using its IMEI number.\n\n"
-        "*Commands:*\n"
-        "/start - Start the bot\n"
-        "/check IMEI - Check an IMEI number\n"
-        "/help - Show this help message\n\n"
-        "*How to use:*\n"
-        "1. Send /check followed by a 15-digit IMEI number\n"
-        "2. Complete the payment ($0.32 USD)\n"
-        "3. Receive detailed device information\n\n"
-        "*Example:* `/check 013440001737488`",
-        parse_mode="Markdown"
-    )
-
-async def handle_unknown(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle unknown commands or messages"""
-    await update.message.reply_text(
-        "I don't understand that command. Please use /help to see available commands."
-    )
-
-# Set up webhook for Telegram
-@app.route(f"/{TOKEN}", methods=["POST"])
-def telegram_webhook():
-    """Handle incoming Telegram webhook updates"""
-    update_json = request.get_json(force=True)
-    logger.info(f"Received Telegram update: {update_json}")
-    
-    # Process the update asynchronously
-    async def process_update():
-        update = Update.de_json(update_json, bot)
-        await application.process_update(update)
-    
-    # Run the async function in the event loop
-    asyncio.run(process_update())
-    return "OK"
-
-# Set up Telegram bot application
-async def setup_application():
-    """Set up the Telegram bot application"""
-    application = Application.builder().token(TOKEN).build()
-    
-    # Add handlers
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("check", check_imei))
-    application.add_handler(CommandHandler("help", help_command))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_unknown))
-    
-    # Set webhook
-    webhook_url = f"{BASE_URL}/{TOKEN}"
-    await application.bot.set_webhook(url=webhook_url)
-    logger.info(f"Webhook set to {webhook_url}")
-    
-    return application
-
-# Initialize the application
-application = None
-
-def initialize_bot():
-    """Initialize the Telegram bot"""
-    global application
-    
-    # Run the async setup in a new event loop
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    application = loop.run_until_complete(setup_application())
-    logger.info("Bot initialized successfully")
-
-# Initialize the bot in a separate thread
-threading.Thread(target=initialize_bot).start()
-
-# Cleanup old unpaid orders periodically
-def cleanup_old_orders():
-    """Remove old unpaid orders from the database"""
-    while True:
-        try:
-            with sqlite3.connect("payments.db") as conn:
-                c = conn.cursor()
-                # Delete unpaid orders older than 24 hours
-                c.execute("DELETE FROM payments WHERE paid = 0 AND datetime(created_at) < datetime('now', '-24 hours')")
-                if c.rowcount > 0:
-                    logger.info(f"Cleaned up {c.rowcount} old unpaid orders")
-                conn.commit()
-        except Exception as e:
-            logger.error(f"Error cleaning up old orders: {e}")
-        
-        # Sleep for 1 hour before next cleanup
-        time.sleep(3600)
-
-# Start cleanup thread
-cleanup_thread = threading.Thread(target=cleanup_old_orders)
-cleanup_thread.daemon = True
-cleanup_thread.start()
-
-# Main entry point
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 8080))
-    logger.info(f"Starting Flask app on port {port}")
-    
-    # Run the Flask app
-    app.run(host="0.0.0.0", port=port)
+    logger.info("Starting Flask app on port 8080")
+    set_webhook()
+    app.run(host="0.0.0.0", port=8080)
