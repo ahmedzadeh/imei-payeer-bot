@@ -142,9 +142,57 @@ async def check_imei(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     user_id = update.message.from_user.id
-    logger.info(f"TEST MODE: Fetching IMEI results for {imei} without payment.")
-    await send_results(user_id, imei)
-    return
+
+    # First, try to fetch result
+    params = {"api_key": IMEI_API_KEY, "checker": "simlock2", "number": imei}
+    try:
+        response = requests.get(IMEI_API_URL, params=params, timeout=10)
+        response.raise_for_status()
+        data = response.json()
+
+        # If successful, tell user result is ready but requires payment
+        msg_preview = f"📱 IMEI {imei} result is ready.\n💳 To view full details, please make a $0.32 payment."
+    except Exception as e:
+        await update.message.reply_text(f"❌ Failed to check IMEI: {e}")
+        return
+
+    order_id = str(uuid.uuid4())
+    amount = "0.32"
+
+    conn = sqlite3.connect("payments.db")
+    c = conn.cursor()
+    c.execute("INSERT INTO payments (order_id, user_id, imei, paid) VALUES (?, ?, ?, ?)", (order_id, user_id, imei, False))
+    conn.commit()
+    conn.close()
+
+    desc = f"IMEI Check for {imei}"
+    m_desc = base64.b64encode(desc.encode()).decode().strip()
+    sign_string = f"{PAYEER_MERCHANT_ID}:{order_id}:{amount}:USD:{m_desc}:{PAYEER_SECRET_KEY}"
+    m_sign = hashlib.sha256(sign_string.encode()).hexdigest().upper()
+
+    payment_data = {
+        "m_shop": PAYEER_MERCHANT_ID,
+        "m_orderid": order_id,
+        "m_amount": amount,
+        "m_curr": "USD",
+        "m_desc": m_desc,
+        "m_sign": m_sign,
+        "m_status_url": f"{BASE_URL}/payeer",
+        "m_success_url": f"{BASE_URL}/success",
+        "m_fail_url": f"{BASE_URL}/fail",
+        "lang": "en"
+    }
+
+    payment_url = f"{PAYEER_PAYMENT_URL}?{urlencode(payment_data)}"
+    logger.info("Generated Payeer payment URL: %s", payment_url)
+
+    keyboard = [[InlineKeyboardButton("💳 Pay $0.32 USD", url=payment_url)]]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    await update.message.reply_text(
+        msg_preview,
+        reply_markup=reply_markup
+    )
 
 async def send_results(user_id: int, imei: str):
     params = {"api_key": IMEI_API_KEY, "checker": "simlock2", "number": imei}
