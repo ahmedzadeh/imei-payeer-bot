@@ -4,6 +4,7 @@ import hashlib
 import logging
 import os
 import sqlite3
+import threading  # Added missing import
 import uuid
 from datetime import datetime
 from urllib.parse import urlencode
