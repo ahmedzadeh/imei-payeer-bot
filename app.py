@@ -1,6 +1,6 @@
 import requests
 import sqlite3
-from flask import Flask, request, render_template, jsonify
+from flask import Flask, request, render_template, render_template_string, jsonify
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 import hashlib
 import uuid
@@ -151,28 +151,26 @@ def telegram_webhook():
 def success():
     m_orderid = request.args.get("m_orderid")
     if not m_orderid:
-        return render_template('fail.html', error="Order ID not found.")
+        return render_template("fail.html")
 
     try:
         with sqlite3.connect("payments.db") as conn:
             c = conn.cursor()
             c.execute("SELECT user_id, imei, paid FROM payments WHERE order_id = ?", (m_orderid,))
             row = c.fetchone()
-            if not row:
-                return render_template('fail.html', error="Order not found.")
-            
-            user_id, imei, paid = row
-            if not paid:
-                # Mark as paid and send result
-                c.execute("UPDATE payments SET paid = 1 WHERE order_id = ?", (m_orderid,))
-                conn.commit()
-                threading.Thread(target=send_imei_result, args=(user_id, imei)).start()
-                return render_template('success.html', message="✅ Payment successful! You'll receive your IMEI result in Telegram.")
+            if row:
+                user_id, imei, paid = row
+                if not paid:
+                    c.execute("UPDATE payments SET paid = 1 WHERE order_id = ?", (m_orderid,))
+                    conn.commit()
+                    threading.Thread(target=send_imei_result, args=(user_id, imei)).start()
+                return render_template("success.html")
             else:
-                return render_template('success.html', message="ℹ️ Payment already processed.")
+                return render_template("fail.html")
     except Exception as e:
         logger.error(f"Error in /success route: {str(e)}")
-        return render_template('fail.html', error="Internal error occurred.")
+        return render_template("fail.html")
+
 
 @app.route("/fail")
 def fail():
