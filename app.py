@@ -151,6 +151,43 @@ def telegram_webhook():
         logger.error(traceback.format_exc())
         return f"Error: {str(e)}", 500
 
+@app.route("/payeer", methods=["POST"])
+def payeer_status():
+    try:
+        data = request.form.to_dict()
+        logger.info(f"Received Payeer callback: {data}")
+
+        order_id = data.get("m_orderid")
+        amount = data.get("m_amount")
+        currency = data.get("m_curr")
+        received_sign = data.get("m_sign")
+
+        if not all([order_id, amount, currency, received_sign]):
+            return "Missing parameters", 400
+
+        sign_string = f"{PAYEER_MERCHANT_ID}:{order_id}:{amount}:{currency}:{PAYEER_SECRET_KEY}"
+        valid_sign = hashlib.sha256(sign_string.encode()).hexdigest().upper()
+
+        if received_sign != valid_sign:
+            logger.warning("Invalid Payeer signature")
+            return "Invalid signature", 403
+
+        with sqlite3.connect("payments.db") as conn:
+            c = conn.cursor()
+            c.execute("SELECT paid, user_id, imei FROM payments WHERE order_id = ?", (order_id,))
+            row = c.fetchone()
+            if row and not row[0]:
+                user_id, imei = row[1], row[2]
+                c.execute("UPDATE payments SET paid = 1 WHERE order_id = ?", (order_id,))
+                conn.commit()
+                threading.Thread(target=send_imei_result, args=(user_id, imei)).start()
+
+        return "OK"
+    except Exception as e:
+        logger.error(f"Error in /payeer status handler: {str(e)}")
+        logger.error(traceback.format_exc())
+        return "FAIL", 500
+
 @app.route("/success")
 def success():
     m_orderid = request.args.get("m_orderid")
