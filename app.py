@@ -147,6 +147,106 @@ def telegram_webhook():
         logger.error(traceback.format_exc())
         return f"Error: {str(e)}", 500
 
+@app.route("/success")
+def success():
+    m_orderid = request.args.get("m_orderid")
+    if not m_orderid:
+        return "❌ Order ID not found.", 400
+
+    try:
+        with sqlite3.connect("payments.db") as conn:
+            c = conn.cursor()
+            c.execute("SELECT user_id, imei, paid FROM payments WHERE order_id = ?", (m_orderid,))
+            row = c.fetchone()
+            if row:
+                user_id, imei, paid = row
+                if not paid:
+                    c.execute("UPDATE payments SET paid = 1 WHERE order_id = ?", (m_orderid,))
+                    conn.commit()
+                    threading.Thread(target=send_imei_result, args=(user_id, imei)).start()
+                    return "✅ Payment successful! You'll receive your IMEI result in Telegram."
+                else:
+                    return "ℹ️ Payment already processed."
+            else:
+                return "❌ Order not found.", 404
+    except Exception as e:
+        logger.error(f"Error in /success route: {str(e)}")
+        return "❌ Internal error occurred.", 500
+
+@app.route("/payeer", methods=["POST"])
+def payeer_callback():
+    data = request.form
+    logger.info(f"Received Payeer callback: {data}")
+
+    required_fields = ['m_operation_id', 'm_sign', 'm_orderid', 'm_amount', 'm_curr', 'm_status']
+    if not all(field in data for field in required_fields):
+        logger.error("Missing required fields in Payeer callback")
+        return "Invalid callback", 400
+
+    m_sign = data['m_sign']
+    sign_string = ":".join([
+        data.get('m_operation_id', ''),
+        data.get('m_operation_ps', ''),
+        data.get('m_operation_date', ''),
+        data.get('m_operation_pay_date', ''),
+        data.get('m_shop', ''),
+        data.get('m_orderid', ''),
+        data.get('m_amount', ''),
+        data.get('m_curr', ''),
+        data.get('m_status', ''),
+        PAYEER_SECRET_KEY
+    ])
+
+    expected_sign = hashlib.sha256(sign_string.encode()).hexdigest().upper()
+    if m_sign != expected_sign:
+        logger.warning("Invalid Payeer signature")
+        return "Invalid signature", 403
+
+    if data['m_status'] != "success":
+        logger.info("Payeer status not successful")
+        return "Not successful", 200
+
+    try:
+        with sqlite3.connect("payments.db") as conn:
+            c = conn.cursor()
+            c.execute("SELECT user_id, imei, paid FROM payments WHERE order_id = ?", (data['m_orderid'],))
+            row = c.fetchone()
+            if row:
+                user_id, imei, paid = row
+                if not paid:
+                    c.execute("UPDATE payments SET paid = 1 WHERE order_id = ?", (data['m_orderid'],))
+                    conn.commit()
+                    threading.Thread(target=send_imei_result, args=(user_id, imei)).start()
+                    return "OK"
+    except Exception as e:
+        logger.error(f"Error processing callback: {str(e)}")
+        return "Internal error", 500
+
+    return "OK"
+
+# Send IMEI result
+
+def send_imei_result(user_id, imei):
+    try:
+        params = {"api_key": IMEI_API_KEY, "checker": "simlock2", "number": imei}
+        response = requests.get(IMEI_API_URL, params=params, timeout=15)
+        response.raise_for_status()
+        data = response.json()
+
+        msg = f"📱 *IMEI Info:*\n"
+        msg += f"🔹 *IMEI:* {data.get('IMEI', 'N/A')}\n"
+        msg += f"🔹 *MEID:* {data.get('MEID', 'N/A')}\n"
+        msg += f"🔹 *Serial:* {data.get('Serial Number', 'N/A')}\n"
+        msg += f"🔹 *Desc:* {data.get('Description', 'N/A')}\n"
+        msg += f"🔹 *Purchase:* {data.get('Date of purchase', 'N/A')}\n"
+        msg += f"🔹 *Coverage:* {data.get('Repairs & Service Coverage', 'N/A')}\n"
+        msg += f"🔹 *Replaced:* {data.get('is replaced', 'N/A')}\n"
+        msg += f"🔹 *SIM Lock:* {data.get('SIM Lock', 'N/A')}"
+
+        event_loop.run_until_complete(application.bot.send_message(chat_id=user_id, text=msg, parse_mode="Markdown"))
+    except Exception as e:
+        logger.error(f"Error sending IMEI result to {user_id}: {str(e)}")
+
 # Set webhook for Telegram
 async def set_webhook_async():
     try:
