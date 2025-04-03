@@ -172,7 +172,7 @@ def success():
             else:
                 return render_template("fail.html", error="Order not found."), 404
     except Exception as e:
-        logger.error(f"Error in /success route: {str(e)}")
+        logger.error("Full exception in /success route:\n" + traceback.format_exc())
         return render_template("fail.html", error="Internal server error."), 500
 
 @app.route("/fail")
