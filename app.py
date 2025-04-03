@@ -1,7 +1,7 @@
 import requests
 import sqlite3
 from flask import Flask, request, render_template_string, jsonify
-from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup, Update
 import hashlib
 import uuid
 import os
@@ -12,6 +12,7 @@ import logging
 import time
 import traceback
 import asyncio
+from telegram.ext import Application
 
 # Set up logging
 logging.basicConfig(
@@ -64,6 +65,28 @@ init_db()
 
 # Initialize bot
 bot = Bot(token=TOKEN)
+application = Application.builder().token(TOKEN).build()
+
+# Telegram webhook endpoint
+@app.route(f"/{TOKEN}", methods=["POST"])
+def telegram_webhook():
+    try:
+        update_json = request.get_json(force=True)
+        logger.info(f"Received Telegram update: {update_json}")
+
+        update = Update.de_json(update_json, bot)
+
+        async def handle():
+            await application.initialize()
+            await application.process_update(update)
+
+        asyncio.run(handle())
+
+        return "OK"
+    except Exception as e:
+        logger.error(f"Error processing Telegram update: {str(e)}")
+        logger.error(traceback.format_exc())
+        return f"Error: {str(e)}", 500
 
 # Set webhook for Telegram
 async def set_webhook_async():
@@ -77,8 +100,6 @@ async def set_webhook_async():
 
 def set_webhook():
     asyncio.run(set_webhook_async())
-
-# (the rest of the code remains unchanged)
 
 if __name__ == "__main__":
     logger.info("Starting Flask app on port 8080")
