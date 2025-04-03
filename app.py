@@ -147,6 +147,67 @@ def telegram_webhook():
         logger.error(traceback.format_exc())
         return f"Error: {str(e)}", 500
 
+@app.route("/payeer", methods=["POST"])
+def payeer_callback():
+    try:
+        form = request.form.to_dict()
+        logger.info(f"Received Payeer callback: {form}")
+
+        required_fields = ["m_operation_id", "m_operation_ps", "m_operation_date", "m_operation_pay_date",
+                           "m_shop", "m_orderid", "m_amount", "m_curr", "m_desc", "m_status", "m_sign"]
+        if not all(field in form for field in required_fields):
+            logger.warning("❌ Missing required fields in Payeer callback")
+            return "Missing fields", 400
+
+        m_sign = form["m_sign"]
+        sign_data = ":".join([
+            form["m_operation_id"],
+            form["m_operation_ps"],
+            form["m_operation_date"],
+            form["m_operation_pay_date"],
+            form["m_shop"],
+            form["m_orderid"],
+            form["m_amount"],
+            form["m_curr"],
+            form["m_desc"],
+            form["m_status"],
+            PAYEER_SECRET_KEY
+        ])
+        valid_sign = hashlib.sha256(sign_data.encode()).hexdigest().upper()
+
+        if m_sign != valid_sign:
+            logger.warning("⚠️ Invalid Payeer signature")
+            return "Invalid signature", 403
+
+        if form["m_status"] != "success":
+            logger.warning("❌ Payment not marked as success")
+            return "Payment not successful", 400
+
+        order_id = form["m_orderid"]
+
+        with sqlite3.connect("payments.db") as conn:
+            c = conn.cursor()
+            c.execute("SELECT user_id, imei, paid FROM payments WHERE order_id = ?", (order_id,))
+            row = c.fetchone()
+            if row:
+                user_id, imei, paid = row
+                if not paid:
+                    c.execute("UPDATE payments SET paid = 1 WHERE order_id = ?", (order_id,))
+                    conn.commit()
+                    threading.Thread(target=send_imei_result, args=(user_id, imei)).start()
+                    logger.info(f"✅ Payment confirmed via Payeer callback for {order_id}")
+                else:
+                    logger.info("ℹ️ Order already paid.")
+            else:
+                logger.error("❌ Order ID not found in DB.")
+
+        return "OK"
+    except Exception as e:
+        logger.error(f"Error in /payeer route: {str(e)}")
+        logger.error(traceback.format_exc())
+        return "Error", 500
+
+
 @app.route("/success")
 def success():
     m_orderid = request.args.get("m_orderid")
