@@ -12,7 +12,7 @@ import logging
 import time
 import traceback
 import asyncio
-from telegram.ext import Application
+from telegram.ext import Application, CommandHandler, ContextTypes
 
 # Set up logging
 logging.basicConfig(
@@ -66,6 +66,66 @@ init_db()
 # Initialize bot
 bot = Bot(token=TOKEN)
 application = Application.builder().token(TOKEN).build()
+
+# Add bot command handlers
+def register_handlers():
+    async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        await update.message.reply_text("👋 Hello! Welcome to IMEI Checker Bot. Use /check <imei> to begin.")
+
+    async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        await update.message.reply_text("Send /check followed by an IMEI number to start a lookup.")
+
+    async def check(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        user_id = update.effective_user.id
+        if not context.args:
+            await update.message.reply_text("❌ Please provide an IMEI number after /check.")
+            return
+
+        imei = context.args[0].strip()
+        if not imei.isdigit() or len(imei) != 15:
+            await update.message.reply_text("❌ Invalid IMEI. It must be 15 digits.")
+            return
+
+        order_id = str(uuid.uuid4())
+
+        # Save order in DB
+        with sqlite3.connect("payments.db") as conn:
+            c = conn.cursor()
+            c.execute("INSERT INTO payments (order_id, user_id, imei, amount, currency, paid) VALUES (?, ?, ?, ?, ?, ?)",
+                      (order_id, user_id, imei, PRICE, "USD", False))
+            conn.commit()
+
+        # Generate Payeer payment link
+        desc = f"IMEI Check for {imei}"
+        m_desc = base64.b64encode(desc.encode()).decode()
+        sign_string = f"{PAYEER_MERCHANT_ID}:{order_id}:{PRICE}:USD:{m_desc}:{PAYEER_SECRET_KEY}"
+        m_sign = hashlib.sha256(sign_string.encode()).hexdigest().upper()
+
+        payment_data = {
+            "m_shop": PAYEER_MERCHANT_ID,
+            "m_orderid": order_id,
+            "m_amount": PRICE,
+            "m_curr": "USD",
+            "m_desc": m_desc,
+            "m_sign": m_sign,
+            "m_status_url": f"{BASE_URL}/payeer",
+            "m_success_url": f"{BASE_URL}/success?m_orderid={order_id}",
+            "m_fail_url": f"{BASE_URL}/fail"
+        }
+
+        payment_url = f"{PAYEER_PAYMENT_URL}?{urlencode(payment_data)}"
+        keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("💳 Pay $0.32 USD", url=payment_url)]])
+
+        await update.message.reply_text(
+            f"📱 IMEI: {imei}\nTo receive your result, please complete payment:",
+            reply_markup=keyboard
+        )
+
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("help", help_cmd))
+    application.add_handler(CommandHandler("check", check))
+
+register_handlers()
 
 # Telegram webhook endpoint
 @app.route(f"/{TOKEN}", methods=["POST"])
