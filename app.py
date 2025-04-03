@@ -66,7 +66,7 @@ application = Application.builder().token(TOKEN).build()
 # Add bot command handlers
 def register_handlers():
     async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        await update.message.reply_text("\U0001F44B Hello! Welcome to IMEI Checker Bot. Use /check <imei> to begin.")
+        await update.message.reply_text("👋 Hello! Welcome to IMEI Checker Bot. Use /check <imei> to begin.")
 
     async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Send /check followed by an IMEI number to start a lookup.")
@@ -74,12 +74,12 @@ def register_handlers():
     async def check(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = update.effective_user.id
         if not context.args:
-            await update.message.reply_text("\u274C Please provide an IMEI number after /check.")
+            await update.message.reply_text("❌ Please provide an IMEI number after /check.")
             return
 
         imei = context.args[0].strip()
         if not imei.isdigit() or len(imei) != 15:
-            await update.message.reply_text("\u274C Invalid IMEI. It must be 15 digits.")
+            await update.message.reply_text("❌ Invalid IMEI. It must be 15 digits.")
             return
 
         order_id = str(uuid.uuid4())
@@ -110,10 +110,10 @@ def register_handlers():
         }
 
         payment_url = f"{PAYEER_PAYMENT_URL}?{urlencode(payment_data)}"
-        keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("\U0001F4B3 Pay $0.32 USD", url=payment_url)]])
+        keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("💳 Pay $0.32 USD", url=payment_url)]])
 
         await update.message.reply_text(
-            f"\U0001F4F1 IMEI: {imei}\nTo receive your result, please complete payment:",
+            f"📱 IMEI: {imei}\nTo receive your result, please complete payment:",
             reply_markup=keyboard
         )
 
@@ -150,43 +150,6 @@ def telegram_webhook():
         logger.error(f"Error processing Telegram update: {str(e)}")
         logger.error(traceback.format_exc())
         return f"Error: {str(e)}", 500
-
-@app.route("/payeer", methods=["POST"])
-def payeer_status():
-    try:
-        data = request.form.to_dict()
-        logger.info(f"Received Payeer callback: {data}")
-
-        order_id = data.get("m_orderid")
-        amount = data.get("m_amount")
-        currency = data.get("m_curr")
-        received_sign = data.get("m_sign")
-
-        if not all([order_id, amount, currency, received_sign]):
-            return "Missing parameters", 400
-
-        sign_string = f"{PAYEER_MERCHANT_ID}:{order_id}:{amount}:{currency}:{PAYEER_SECRET_KEY}"
-        valid_sign = hashlib.sha256(sign_string.encode()).hexdigest().upper()
-
-        if received_sign != valid_sign:
-            logger.warning("Invalid Payeer signature")
-            return "Invalid signature", 403
-
-        with sqlite3.connect("payments.db") as conn:
-            c = conn.cursor()
-            c.execute("SELECT paid, user_id, imei FROM payments WHERE order_id = ?", (order_id,))
-            row = c.fetchone()
-            if row and not row[0]:
-                user_id, imei = row[1], row[2]
-                c.execute("UPDATE payments SET paid = 1 WHERE order_id = ?", (order_id,))
-                conn.commit()
-                threading.Thread(target=send_imei_result, args=(user_id, imei)).start()
-
-        return "OK"
-    except Exception as e:
-        logger.error(f"Error in /payeer status handler: {str(e)}")
-        logger.error(traceback.format_exc())
-        return "FAIL", 500
 
 @app.route("/success")
 def success():
