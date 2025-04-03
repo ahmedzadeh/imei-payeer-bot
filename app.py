@@ -11,6 +11,7 @@ import base64
 import logging
 import time
 import traceback
+import asyncio
 
 # Set up logging
 logging.basicConfig(
@@ -64,19 +65,20 @@ init_db()
 # Initialize bot
 bot = Bot(token=TOKEN)
 
-# Function to set webhook
-def set_webhook():
-    """Set the webhook for the bot"""
+# Set webhook for Telegram
+async def set_webhook_async():
     try:
         webhook_url = f"{BASE_URL}/{TOKEN}"
-        bot.set_webhook(url=webhook_url)
+        await bot.set_webhook(url=webhook_url)
         logger.info(f"Webhook set to {webhook_url}")
     except Exception as e:
         logger.error(f"Failed to set webhook: {str(e)}")
         logger.error(traceback.format_exc())
 
-# Flask routes...
-# (Rest of your code remains unchanged)
+def set_webhook():
+    asyncio.run(set_webhook_async())
+
+# (the rest of the code remains unchanged)
 
 if __name__ == "__main__":
     logger.info("Starting Flask app on port 8080")
