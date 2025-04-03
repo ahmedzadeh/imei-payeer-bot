@@ -95,7 +95,7 @@ def register_handlers():
         desc = f"IMEI Check for {imei}"
         m_desc = base64.b64encode(desc.encode()).decode()
         sign_string = f"{PAYEER_MERCHANT_ID}:{order_id}:{PRICE}:USD:{m_desc}:{PAYEER_SECRET_KEY}"
-        m_sign = hashlib.sha256(sign_string.encode()).hexdigest().upper()
+        m_sign = hashlib.md5(sign_string.encode()).hexdigest().upper()
 
         payment_data = {
             "m_shop": PAYEER_MERCHANT_ID,
@@ -161,6 +161,7 @@ def success():
             if row:
                 user_id, imei, paid = row
                 if not paid:
+                    # Mark as paid and send result
                     c.execute("UPDATE payments SET paid = 1 WHERE order_id = ?", (m_orderid,))
                     conn.commit()
                     threading.Thread(target=send_imei_result, args=(user_id, imei)).start()
@@ -172,57 +173,6 @@ def success():
     except Exception as e:
         logger.error(f"Error in /success route: {str(e)}")
         return "❌ Internal error occurred.", 500
-
-@app.route("/payeer", methods=["POST"])
-def payeer_callback():
-    data = request.form
-    logger.info(f"Received Payeer callback: {data}")
-
-    required_fields = ['m_operation_id', 'm_sign', 'm_orderid', 'm_amount', 'm_curr', 'm_status']
-    if not all(field in data for field in required_fields):
-        logger.error("Missing required fields in Payeer callback")
-        return "Invalid callback", 400
-
-    m_sign = data['m_sign']
-    sign_string = ":".join([
-        data.get('m_operation_id', ''),
-        data.get('m_operation_ps', ''),
-        data.get('m_operation_date', ''),
-        data.get('m_operation_pay_date', ''),
-        data.get('m_shop', ''),
-        data.get('m_orderid', ''),
-        data.get('m_amount', ''),
-        data.get('m_curr', ''),
-        data.get('m_status', ''),
-        PAYEER_SECRET_KEY
-    ])
-
-    expected_sign = hashlib.sha256(sign_string.encode()).hexdigest().upper()
-    if m_sign != expected_sign:
-        logger.warning("Invalid Payeer signature")
-        return "Invalid signature", 403
-
-    if data['m_status'] != "success":
-        logger.info("Payeer status not successful")
-        return "Not successful", 200
-
-    try:
-        with sqlite3.connect("payments.db") as conn:
-            c = conn.cursor()
-            c.execute("SELECT user_id, imei, paid FROM payments WHERE order_id = ?", (data['m_orderid'],))
-            row = c.fetchone()
-            if row:
-                user_id, imei, paid = row
-                if not paid:
-                    c.execute("UPDATE payments SET paid = 1 WHERE order_id = ?", (data['m_orderid'],))
-                    conn.commit()
-                    threading.Thread(target=send_imei_result, args=(user_id, imei)).start()
-                    return "OK"
-    except Exception as e:
-        logger.error(f"Error processing callback: {str(e)}")
-        return "Internal error", 500
-
-    return "OK"
 
 # Send IMEI result
 
