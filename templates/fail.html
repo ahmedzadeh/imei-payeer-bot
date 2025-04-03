@@ -1,58 +1,18 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>Payment Failed</title>
-  <style>
-    body {
-      margin: 0;
-      background: linear-gradient(135deg, #d63031, #ff7675);
-      color: white;
-      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-      display: flex;
-      justify-content: center;
-      align-items: center;
-      height: 100vh;
-      animation: fadeIn 1s ease-in;
-    }
-    .container {
-      text-align: center;
-      background: rgba(0,0,0,0.1);
-      padding: 40px;
-      border-radius: 20px;
-      backdrop-filter: blur(10px);
-      animation: slideUp 1s ease-in;
-    }
-    .crossmark {
-      font-size: 64px;
-      animation: shake 0.5s;
-    }
-    h1 {
-      margin-bottom: 10px;
-    }
-    @keyframes shake {
-      0% { transform: translateX(-5px); }
-      25% { transform: translateX(5px); }
-      50% { transform: translateX(-5px); }
-      75% { transform: translateX(5px); }
-      100% { transform: translateX(0); }
-    }
-    @keyframes slideUp {
-      from { transform: translateY(40px); opacity: 0; }
-      to { transform: translateY(0); opacity: 1; }
-    }
-    @keyframes fadeIn {
-      from { opacity: 0; }
-      to { opacity: 1; }
-    }
-  </style>
+    <title>Payment Failed</title>
+    <style>
+        body { font-family: Arial, sans-serif; background: #fff3f3; text-align: center; padding: 60px; }
+        .card { background: white; padding: 40px; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); display: inline-block; }
+        h1 { color: #dc3545; }
+    </style>
 </head>
 <body>
-  <div class="container">
-    <div class="crossmark">❌</div>
-    <h1>Payment Failed</h1>
-    <p>{{ error }}</p>
-  </div>
+    <div class="card">
+        <h1>❌ Payment Failed</h1>
+        <p>{{ error }}</p>
+        <p>If you think this is a mistake, please contact support.</p>
+    </div>
 </body>
 </html>
