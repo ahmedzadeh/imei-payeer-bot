@@ -127,6 +127,10 @@ register_handlers()
 event_loop = asyncio.new_event_loop()
 asyncio.set_event_loop(event_loop)
 
+@app.route("/")
+def home():
+    return "✅ IMEI Payeer Bot is running."
+
 @app.route(f"/{TOKEN}", methods=["POST"])
 def telegram_webhook():
     try:
