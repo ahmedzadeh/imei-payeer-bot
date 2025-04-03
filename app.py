@@ -38,24 +38,47 @@ PAYEER_PAYMENT_URL = "https://payeer.com/merchant/"
 # Price in USD
 PRICE = "0.32"
 
-# Callback URL checker
+# Initialize Flask app
+app = Flask(__name__)
 
-def verify_callback_url():
-    callback_url = f"{BASE_URL}/payeer"
+# Initialize database
+def init_db():
+    with sqlite3.connect("payments.db") as conn:
+        c = conn.cursor()
+        c.execute("""
+        CREATE TABLE IF NOT EXISTS payments (
+            order_id TEXT PRIMARY KEY,
+            user_id INTEGER,
+            imei TEXT,
+            amount TEXT,
+            currency TEXT,
+            paid BOOLEAN DEFAULT 0,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+        """)
+        conn.commit()
+        logger.info("Database initialized")
+
+init_db()
+
+# Initialize bot
+bot = Bot(token=TOKEN)
+
+# Function to set webhook
+def set_webhook():
+    """Set the webhook for the bot"""
     try:
-        response = requests.get(callback_url, timeout=5)
-        if response.status_code == 404:
-            logger.info(f"✅ Callback URL {callback_url} appears to be accessible (HTTP 404 is expected)")
-        else:
-            logger.warning(f"⚠️ Callback URL {callback_url} returned unexpected status: {response.status_code}")
+        webhook_url = f"{BASE_URL}/{TOKEN}"
+        bot.set_webhook(url=webhook_url)
+        logger.info(f"Webhook set to {webhook_url}")
     except Exception as e:
-        logger.error(f"❌ Callback URL {callback_url} is not accessible: {str(e)}")
-        logger.error("Payments may not be processed correctly!")
+        logger.error(f"Failed to set webhook: {str(e)}")
+        logger.error(traceback.format_exc())
 
-# The rest of the code continues below (not shown here for brevity)
+# Flask routes...
+# (Rest of your code remains unchanged)
 
 if __name__ == "__main__":
     logger.info("Starting Flask app on port 8080")
     set_webhook()
-    verify_callback_url()  # ✅ Added callback check
     app.run(host="0.0.0.0", port=8080)
