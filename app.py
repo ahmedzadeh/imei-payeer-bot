@@ -183,10 +183,10 @@ def send_imei_result(user_id, imei):
         response.raise_for_status()
         data = response.json()
 
-        msg = f"✅ Payment successful!\n"
-        msg = f"\n"
-        msg = f"📱 *IMEI Info:*\n"
+        msg = "✅ *Payment successful!*\n\n"
+        msg += "📱 *IMEI Info:*\n"
         msg += f"🔹 *IMEI:* {data.get('IMEI', 'N/A')}\n"
+        msg += f"🔹 *IMEI2:* {data.get('IMEI2', 'N/A')}\n"
         msg += f"🔹 *MEID:* {data.get('MEID', 'N/A')}\n"
         msg += f"🔹 *Serial:* {data.get('Serial Number', 'N/A')}\n"
         msg += f"🔹 *Desc:* {data.get('Description', 'N/A')}\n"
@@ -195,9 +195,15 @@ def send_imei_result(user_id, imei):
         msg += f"🔹 *Replaced:* {data.get('is replaced', 'N/A')}\n"
         msg += f"🔹 *SIM Lock:* {data.get('SIM Lock', 'N/A')}"
 
-        event_loop.run_until_complete(application.bot.send_message(chat_id=user_id, text=msg, parse_mode="Markdown"))
+        event_loop.run_until_complete(application.bot.send_message(
+            chat_id=user_id,
+            text=msg,
+            parse_mode="Markdown"
+        ))
+
     except Exception as e:
         logger.error(f"Error sending IMEI result to {user_id}: {str(e)}")
+
 
 # Set webhook for Telegram
 async def set_webhook_async():
