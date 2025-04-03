@@ -95,7 +95,7 @@ def register_handlers():
         desc = f"IMEI Check for {imei}"
         m_desc = base64.b64encode(desc.encode()).decode()
         sign_string = f"{PAYEER_MERCHANT_ID}:{order_id}:{PRICE}:USD:{m_desc}:{PAYEER_SECRET_KEY}"
-        m_sign = hashlib.md5(sign_string.encode()).hexdigest().upper()
+        m_sign = hashlib.sha256(sign_string.encode()).hexdigest().upper()
 
         payment_data = {
             "m_shop": PAYEER_MERCHANT_ID,
