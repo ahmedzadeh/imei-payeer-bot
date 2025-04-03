@@ -183,6 +183,8 @@ def send_imei_result(user_id, imei):
         response.raise_for_status()
         data = response.json()
 
+        msg = f"✅ Payment successful!\n"
+        msg = f"\n"
         msg = f"📱 *IMEI Info:*\n"
         msg += f"🔹 *IMEI:* {data.get('IMEI', 'N/A')}\n"
         msg += f"🔹 *MEID:* {data.get('MEID', 'N/A')}\n"
