@@ -123,6 +123,10 @@ def register_handlers():
 
 register_handlers()
 
+# Persistent loop setup
+event_loop = asyncio.new_event_loop()
+asyncio.set_event_loop(event_loop)
+
 @app.route(f"/{TOKEN}", methods=["POST"])
 def telegram_webhook():
     try:
@@ -135,66 +139,13 @@ def telegram_webhook():
             await application.initialize()
             await application.process_update(update)
 
-        asyncio.run(handle())
+        event_loop.run_until_complete(handle())
 
         return "OK"
     except Exception as e:
         logger.error(f"Error processing Telegram update: {str(e)}")
         logger.error(traceback.format_exc())
         return f"Error: {str(e)}", 500
-
-@app.route("/payeer", methods=["POST"])
-def payeer_callback():
-    data = request.form
-    logger.info(f"Received Payeer callback: {data}")
-
-    required_fields = ['m_operation_id', 'm_sign', 'm_orderid', 'm_amount', 'm_curr', 'm_status']
-    if not all(field in data for field in required_fields):
-        return "Missing fields", 400
-
-    sign_string = f"{data['m_operation_id']}:{data.get('m_operation_ps','')}:{data.get('m_operation_date','')}:{data.get('m_operation_pay_date','')}:{PAYEER_MERCHANT_ID}:{data['m_orderid']}:{data['m_amount']}:{data['m_curr']}:{data['m_status']}:{PAYEER_SECRET_KEY}"
-    expected_sign = hashlib.sha256(sign_string.encode()).hexdigest().upper()
-
-    if data['m_sign'] != expected_sign or data['m_status'] != "success":
-        return "Invalid signature or status", 400
-
-    with sqlite3.connect("payments.db") as conn:
-        c = conn.cursor()
-        c.execute("SELECT user_id, imei FROM payments WHERE order_id = ? AND paid = 0", (data['m_orderid'],))
-        row = c.fetchone()
-        if row:
-            user_id, imei = row
-            c.execute("UPDATE payments SET paid = 1 WHERE order_id = ?", (data['m_orderid'],))
-            conn.commit()
-            threading.Thread(target=send_imei_results, args=(user_id, imei)).start()
-
-    return "OK"
-
-@app.route("/success")
-def success():
-    order_id = request.args.get("m_orderid")
-    message = "✅ Payment received. Your IMEI result will arrive in Telegram shortly."
-
-    if order_id:
-        with sqlite3.connect("payments.db") as conn:
-            c = conn.cursor()
-            c.execute("SELECT user_id, imei, paid FROM payments WHERE order_id = ?", (order_id,))
-            row = c.fetchone()
-            if row:
-                user_id, imei, paid = row
-                if not paid:
-                    c.execute("UPDATE payments SET paid = 1 WHERE order_id = ?", (order_id,))
-                    conn.commit()
-                    threading.Thread(target=send_imei_results, args=(user_id, imei)).start()
-                    message += f"\nIMEI: {imei}"
-
-    return render_template_string("""
-    <html><body><h2>{{ message }}</h2><a href="https://t.me/your_bot_username">Return to bot</a></body></html>
-    """, message=message)
-
-@app.route("/fail")
-def fail():
-    return "❌ Payment failed. Please try again."
 
 # Set webhook for Telegram
 async def set_webhook_async():
@@ -207,30 +158,9 @@ async def set_webhook_async():
         logger.error(traceback.format_exc())
 
 def set_webhook():
-    asyncio.run(set_webhook_async())
+    event_loop.run_until_complete(set_webhook_async())
 
 if __name__ == "__main__":
     logger.info("Starting Flask app on port 8080")
     set_webhook()
     app.run(host="0.0.0.0", port=8080)
-
-def send_imei_results(user_id, imei):
-    try:
-        params = {"api_key": IMEI_API_KEY, "checker": "simlock2", "number": imei}
-        response = requests.get(IMEI_API_URL, params=params, timeout=15)
-        data = response.json()
-        msg = "\n".join([
-            "📱 *IMEI Info:*",
-            f"🔹 *IMEI 1:* {data.get('IMEI', 'N/A')}",
-            f"🔹 *IMEI 2:* {data.get('IMEI2', 'N/A')}",
-            f"🔹 *MEID:* {data.get('MEID', 'N/A')}",
-            f"🔹 *Serial Number:* {data.get('Serial Number', 'N/A')}",
-            f"🔹 *Description:* {data.get('Description', 'N/A')}",
-            f"🔹 *Purchase Date:* {data.get('Date of purchase', 'N/A')}",
-            f"🔹 *Coverage:* {data.get('Repairs & Service Coverage', 'N/A')}",
-            f"🔹 *Is Replaced:* {data.get('is replaced', 'N/A')}",
-            f"🔹 *SIM Lock:* {data.get('SIM Lock', 'N/A')}",
-        ])
-        asyncio.run(application.bot.send_message(chat_id=user_id, text=msg, parse_mode="Markdown"))
-    except Exception as e:
-        logger.error(f"Failed to send IMEI result: {str(e)}")
