@@ -1,6 +1,6 @@
 import requests
 import sqlite3
-from flask import Flask, request, render_template_string, jsonify
+from flask import Flask, request, render_template, jsonify
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 import hashlib
 import uuid
@@ -66,7 +66,7 @@ application = Application.builder().token(TOKEN).build()
 # Add bot command handlers
 def register_handlers():
     async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        await update.message.reply_text("👋 Hello! Welcome to IMEI Checker Bot. Use /check <imei> to begin.")
+        await update.message.reply_text("\U0001F44B Hello! Welcome to IMEI Checker Bot. Use /check <imei> to begin.")
 
     async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Send /check followed by an IMEI number to start a lookup.")
@@ -74,12 +74,12 @@ def register_handlers():
     async def check(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = update.effective_user.id
         if not context.args:
-            await update.message.reply_text("❌ Please provide an IMEI number after /check.")
+            await update.message.reply_text("\u274C Please provide an IMEI number after /check.")
             return
 
         imei = context.args[0].strip()
         if not imei.isdigit() or len(imei) != 15:
-            await update.message.reply_text("❌ Invalid IMEI. It must be 15 digits.")
+            await update.message.reply_text("\u274C Invalid IMEI. It must be 15 digits.")
             return
 
         order_id = str(uuid.uuid4())
@@ -110,10 +110,10 @@ def register_handlers():
         }
 
         payment_url = f"{PAYEER_PAYMENT_URL}?{urlencode(payment_data)}"
-        keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("💳 Pay $0.32 USD", url=payment_url)]])
+        keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("\U0001F4B3 Pay $0.32 USD", url=payment_url)]])
 
         await update.message.reply_text(
-            f"📱 IMEI: {imei}\nTo receive your result, please complete payment:",
+            f"\U0001F4F1 IMEI: {imei}\nTo receive your result, please complete payment:",
             reply_markup=keyboard
         )
 
@@ -151,7 +151,7 @@ def telegram_webhook():
 def success():
     m_orderid = request.args.get("m_orderid")
     if not m_orderid:
-        return "❌ Order ID not found.", 400
+        return render_template("fail.html", error="Order ID not found."), 400
 
     try:
         with sqlite3.connect("payments.db") as conn:
@@ -161,21 +161,21 @@ def success():
             if row:
                 user_id, imei, paid = row
                 if not paid:
-                    # Mark as paid and send result
                     c.execute("UPDATE payments SET paid = 1 WHERE order_id = ?", (m_orderid,))
                     conn.commit()
                     threading.Thread(target=send_imei_result, args=(user_id, imei)).start()
-                    return "✅ Payment successful! You'll receive your IMEI result in Telegram."
-                else:
-                    return "ℹ️ Payment already processed."
+                return render_template("success.html", imei=imei)
             else:
-                return "❌ Order not found.", 404
+                return render_template("fail.html", error="Order not found."), 404
     except Exception as e:
         logger.error(f"Error in /success route: {str(e)}")
-        return "❌ Internal error occurred.", 500
+        return render_template("fail.html", error="Internal server error."), 500
+
+@app.route("/fail")
+def fail():
+    return render_template("fail.html", error="Payment was not completed.")
 
 # Send IMEI result
-
 def send_imei_result(user_id, imei):
     try:
         params = {"api_key": IMEI_API_KEY, "checker": "simlock2", "number": imei}
@@ -203,7 +203,6 @@ def send_imei_result(user_id, imei):
 
     except Exception as e:
         logger.error(f"Error sending IMEI result to {user_id}: {str(e)}")
-
 
 # Set webhook for Telegram
 async def set_webhook_async():
