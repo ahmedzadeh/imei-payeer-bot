@@ -127,10 +127,6 @@ register_handlers()
 event_loop = asyncio.new_event_loop()
 asyncio.set_event_loop(event_loop)
 
-@app.route("/")
-def home():
-    return "✅ IMEI Payeer Bot is running."
-
 @app.route(f"/{TOKEN}", methods=["POST"])
 def telegram_webhook():
     try:
@@ -155,31 +151,36 @@ def telegram_webhook():
 def success():
     m_orderid = request.args.get("m_orderid")
     if not m_orderid:
-        return render_template("fail.html", error="Order ID not found."), 400
+        return render_template('fail.html', error="Order ID not found.")
 
     try:
         with sqlite3.connect("payments.db") as conn:
             c = conn.cursor()
             c.execute("SELECT user_id, imei, paid FROM payments WHERE order_id = ?", (m_orderid,))
             row = c.fetchone()
-            if row:
-                user_id, imei, paid = row
-                if not paid:
-                    c.execute("UPDATE payments SET paid = 1 WHERE order_id = ?", (m_orderid,))
-                    conn.commit()
-                    threading.Thread(target=send_imei_result, args=(user_id, imei)).start()
-                return render_template("success.html", imei=imei)
+            if not row:
+                return render_template('fail.html', error="Order not found.")
+            
+            user_id, imei, paid = row
+            if not paid:
+                # Mark as paid and send result
+                c.execute("UPDATE payments SET paid = 1 WHERE order_id = ?", (m_orderid,))
+                conn.commit()
+                threading.Thread(target=send_imei_result, args=(user_id, imei)).start()
+                return render_template('success.html', message="✅ Payment successful! You'll receive your IMEI result in Telegram.")
             else:
-                return render_template("fail.html", error="Order not found."), 404
+                return render_template('success.html', message="ℹ️ Payment already processed.")
     except Exception as e:
-        logger.error("Full exception in /success route:\n" + traceback.format_exc())
-        return render_template("fail.html", error="Internal server error."), 500
+        logger.error(f"Error in /success route: {str(e)}")
+        return render_template('fail.html', error="Internal error occurred.")
 
 @app.route("/fail")
 def fail():
-    return render_template("fail.html", error="Payment was not completed.")
+    error_message = request.args.get('error', 'Payment failed.')
+    return render_template('fail.html', error=error_message)
 
 # Send IMEI result
+
 def send_imei_result(user_id, imei):
     try:
         params = {"api_key": IMEI_API_KEY, "checker": "simlock2", "number": imei}
@@ -207,6 +208,7 @@ def send_imei_result(user_id, imei):
 
     except Exception as e:
         logger.error(f"Error sending IMEI result to {user_id}: {str(e)}")
+
 
 # Set webhook for Telegram
 async def set_webhook_async():
