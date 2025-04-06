@@ -134,7 +134,12 @@ def telegram_webhook():
             await application.initialize()
             await application.process_update(update)
 
-        asyncio.run(handle())
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            asyncio.create_task(handle())
+        else:
+            loop.run_until_complete(handle())
+
         return "OK"
     except Exception as e:
         logger.error(f"Error: {str(e)}")
@@ -192,27 +197,35 @@ def fail():
     return render_template("fail.html")
 
 def send_imei_result(user_id, imei):
-    try:
-        params = {"api_key": IMEI_API_KEY, "checker": "simlock2", "number": imei}
-        res = requests.get(IMEI_API_URL, params=params, timeout=15)
-        res.raise_for_status()
-        data = res.json()
+    async def send():
+        try:
+            params = {"api_key": IMEI_API_KEY, "checker": "simlock2", "number": imei}
+            res = requests.get(IMEI_API_URL, params=params, timeout=15)
+            res.raise_for_status()
+            data = res.json()
 
-        msg = "✅ *Payment successful!*\n\n"
-        msg += "📱 *IMEI Info:*\n"
-        msg += f"🔹 *IMEI:* {data.get('IMEI', 'N/A')}\n"
-        msg += f"🔹 *IMEI2:* {data.get('IMEI2', 'N/A')}\n"
-        msg += f"🔹 *MEID:* {data.get('MEID', 'N/A')}\n"
-        msg += f"🔹 *Serial:* {data.get('Serial Number', 'N/A')}\n"
-        msg += f"🔹 *Desc:* {data.get('Description', 'N/A')}\n"
-        msg += f"🔹 *Purchase:* {data.get('Date of purchase', 'N/A')}\n"
-        msg += f"🔹 *Coverage:* {data.get('Repairs & Service Coverage', 'N/A')}\n"
-        msg += f"🔹 *Replaced:* {data.get('is replaced', 'N/A')}\n"
-        msg += f"🔹 *SIM Lock:* {data.get('SIM Lock', 'N/A')}"
+            msg = "✅ *Payment successful!*\n\n"
+            msg += "📱 *IMEI Info:*\n"
+            msg += f"🔹 *IMEI:* {data.get('IMEI', 'N/A')}\n"
+            msg += f"🔹 *IMEI2:* {data.get('IMEI2', 'N/A')}\n"
+            msg += f"🔹 *MEID:* {data.get('MEID', 'N/A')}\n"
+            msg += f"🔹 *Serial:* {data.get('Serial Number', 'N/A')}\n"
+            msg += f"🔹 *Desc:* {data.get('Description', 'N/A')}\n"
+            msg += f"🔹 *Purchase:* {data.get('Date of purchase', 'N/A')}\n"
+            msg += f"🔹 *Coverage:* {data.get('Repairs & Service Coverage', 'N/A')}\n"
+            msg += f"🔹 *Replaced:* {data.get('is replaced', 'N/A')}\n"
+            msg += f"🔹 *SIM Lock:* {data.get('SIM Lock', 'N/A')}"
 
-        asyncio.run(application.bot.send_message(chat_id=user_id, text=msg, parse_mode="Markdown"))
-    except Exception as e:
-        logger.error(f"Sending result error: {str(e)}")
+            await application.bot.send_message(chat_id=user_id, text=msg, parse_mode="Markdown")
+
+        except Exception as e:
+            logger.error(f"Sending result error: {str(e)}")
+
+    loop = asyncio.get_event_loop()
+    if loop.is_running():
+        asyncio.create_task(send())
+    else:
+        loop.run_until_complete(send())
 
 async def set_webhook_async():
     try:
