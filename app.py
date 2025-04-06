@@ -75,6 +75,8 @@ def register_handlers():
         if text == "🔍 Check IMEI":
             user_states[user_id] = "awaiting_imei"
             await update.message.reply_text("🔢 Please enter your 15-digit IMEI number.")
+        elif text == "❓ Help":
+            await update.message.reply_text("ℹ️ Use the 'Check IMEI' button and follow instructions to proceed.")
         elif user_states.get(user_id) == "awaiting_imei":
             imei = text.strip()
             if not imei.isdigit() or len(imei) != 15:
