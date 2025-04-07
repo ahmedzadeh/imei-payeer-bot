@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 TOKEN = os.getenv("TOKEN", "8018027330:AAGbqSQ5wQvLj2rPGXQ_MOWU3I8z7iUpjPw")
 IMEI_API_KEY = os.getenv("IMEI_API_KEY", "PKZ-HK5K6HMRFAXE5VZLCNW6L")
 PAYEER_MERCHANT_ID = os.getenv("PAYEER_MERCHANT_ID", "2210021863")
-PAYEER_SECRET_KEY = os.getenv("PAYEER_SECRET_KEY", "123")
+PAYEER_SECRET_KEY = os.getenv("PAYEER_SECRET_KEY", "11%=2;}-|O@.{QVvXdw~")
 BASE_URL = os.getenv("BASE_URL", "https://api.imeichecks.online")
 
 IMEI_API_URL = "https://proimei.info/en/prepaid/api"
@@ -75,6 +75,8 @@ def register_handlers():
         if text == "🔍 Check IMEI":
             user_states[user_id] = "awaiting_imei"
             await update.message.reply_text("🔢 Please enter your 15-digit IMEI number.")
+        elif text == "❓ Help":
+            await update.message.reply_text("ℹ️ Use the 'Check IMEI' button and follow instructions to proceed.")
         elif user_states.get(user_id) == "awaiting_imei":
             imei = text.strip()
             if not imei.isdigit() or len(imei) != 15:
@@ -196,10 +198,16 @@ def fail():
 
 def send_imei_result(user_id, imei):
     try:
-        params = {"api_key": IMEI_API_KEY, "checker": "simlock2", "number": imei}
-        res = requests.get(IMEI_API_URL, params=params, timeout=15)
-        res.raise_for_status()
-        data = res.json()
+        for checker in ["simlock2", "simlock3"]:
+            params = {"api_key": IMEI_API_KEY, "checker": checker, "number": imei}
+            res = requests.get(IMEI_API_URL, params=params, timeout=15)
+            if res.status_code == 200:
+                data = res.json()
+                if data.get("IMEI"):
+                    break
+        else:
+            asyncio.run(application.bot.send_message(chat_id=user_id, text="❌ IMEI not found.", parse_mode="Markdown"))
+            return
 
         msg = "✅ *Payment successful!*\n\n"
         msg += "📱 *IMEI Info:*\n"
