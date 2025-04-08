@@ -58,6 +58,23 @@ app = Flask(__name__)
 # Bot setup
 application = Application.builder().token(TOKEN).build()
 
+async def handle_update(update: Update):
+    await application.update_queue.put(update)
+
+@app.route(f"/{TOKEN}", methods=["POST"])
+def telegram_webhook():
+    try:
+        update_json = request.get_json(force=True)
+        logger.info(f"Received Telegram update: {update_json}")
+
+        update = Update.de_json(update_json, application.bot)
+        asyncio.run(handle_update(update))
+        return "OK"
+    except Exception as e:
+        logger.error(f"Webhook processing error: {str(e)}")
+        logger.error(traceback.format_exc())
+        return "Error", 500
+
 def register_handlers():
     async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         keyboard = [[KeyboardButton("🔍 Check IMEI")], [KeyboardButton("❓ Help")]]
@@ -125,25 +142,6 @@ def register_handlers():
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler))
 
 register_handlers()
-
-@app.route(f"/{TOKEN}", methods=["POST"])
-def telegram_webhook():
-    try:
-        update_json = request.get_json(force=True)
-        logger.info(f"Received Telegram update: {update_json}")
-
-        update = Update.de_json(update_json, application.bot)
-
-        async def process():
-            await application.initialize()
-            await application.process_update(update)
-
-        asyncio.run(process())
-        return "OK"
-    except Exception as e:
-        logger.error(f"Webhook processing error: {str(e)}")
-        logger.error(traceback.format_exc())
-        return "Error", 500
 
 @app.route("/payeer", methods=["POST"])
 def payeer_callback():
