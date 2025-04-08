@@ -123,15 +123,19 @@ def register_handlers():
 
 register_handlers()
 
-@app.post(f"/{TOKEN}")
-async def telegram_webhook():
+@app.route(f"/{TOKEN}", methods=["POST"])
+def telegram_webhook():
     try:
         update_json = request.get_json(force=True)
         logger.info(f"Received Telegram update: {update_json}")
 
         update = Update.de_json(update_json, application.bot)
-        await application.process_update(update)
 
+        async def process():
+            await application.initialize()
+            await application.process_update(update)
+
+        asyncio.run(process())
         return "OK"
     except Exception as e:
         logger.error(f"Webhook processing error: {str(e)}")
