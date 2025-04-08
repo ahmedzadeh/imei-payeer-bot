@@ -1,3 +1,5 @@
 flask
 python-telegram-bot
 requests
+SQLAlchemy
+psycopg2-binary
