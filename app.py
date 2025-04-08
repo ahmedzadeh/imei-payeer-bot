@@ -2,7 +2,7 @@ import requests
 from flask import Flask, request, render_template
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton
 from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, filters
-from sqlalchemy import create_engine, Column, String, Integer, Boolean, TIMESTAMP
+from sqlalchemy import create_engine, Column, String, Integer, Boolean, TIMESTAMP, BigInteger
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 from datetime import datetime
@@ -44,7 +44,7 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 class Payment(Base):
     __tablename__ = "payments"
     order_id = Column(String, primary_key=True, index=True)
-    user_id = Column(Integer, index=True)
+    user_id = Column(BigInteger, index=True)
     imei = Column(String)
     amount = Column(String)
     currency = Column(String)
