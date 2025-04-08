@@ -191,3 +191,28 @@ def register_handlers():
     application.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment))
 
 register_handlers()
+
+if __name__ == "__main__":
+    import threading
+
+    def run_flask():
+        app.run(host="0.0.0.0", port=8080)
+
+    def run_webhook():
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+
+        async def set_webhook_async():
+            try:
+                webhook_url = f"{BASE_URL}/{TOKEN}"
+                await application.bot.set_webhook(url=webhook_url)
+                logger.info(f"✅ Webhook установлен: {webhook_url}")
+            except Exception as e:
+                logger.error(f"Webhook Error: {str(e)}")
+                logger.error(traceback.format_exc())
+
+        loop.run_until_complete(set_webhook_async())
+
+    threading.Thread(target=run_webhook).start()
+    run_flask()
+
