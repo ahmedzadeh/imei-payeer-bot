@@ -57,7 +57,6 @@ app = Flask(__name__)
 
 # Bot setup
 application = Application.builder().token(TOKEN).build()
-user_states = {}
 
 def register_handlers():
     async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -71,14 +70,18 @@ def register_handlers():
     async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = update.effective_user.id
         text = update.message.text
+        logger.info(f"[text_handler] From {user_id}: {text}")
+        logger.info(f"[text_handler] Current state: {context.user_data.get('state')}")
 
         if text == "🔍 Check IMEI":
-            user_states[user_id] = "awaiting_imei"
+            context.user_data['state'] = "awaiting_imei"
+            logger.info(f"[text_handler] Set state to awaiting_imei for {user_id}")
             await update.message.reply_text("🔢 Please enter your 15-digit IMEI number.")
         elif text == "❓ Help":
             await update.message.reply_text("ℹ️ Use the 'Check IMEI' button and follow instructions to proceed.")
-        elif user_states.get(user_id) == "awaiting_imei":
+        elif context.user_data.get("state") == "awaiting_imei":
             imei = text.strip()
+            logger.info(f"[text_handler] Received IMEI: {imei}")
             if not imei.isdigit() or len(imei) != 15:
                 await update.message.reply_text("❌ Invalid IMEI. It must be 15 digits.")
                 return
@@ -113,7 +116,7 @@ def register_handlers():
                 f"📱 IMEI: {imei}\nTo receive your result, please complete payment:",
                 reply_markup=keyboard
             )
-            user_states[user_id] = None
+            context.user_data['state'] = None
         else:
             await update.message.reply_text("❗ Please use the menu or /start to begin.")
 
