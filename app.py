@@ -1,15 +1,17 @@
 import requests
-import sqlite3
 from flask import Flask, request, render_template
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton, LabeledPrice
-from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, filters, CallbackQueryHandler
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton
+from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, filters
+from sqlalchemy import create_engine, Column, String, Integer, Boolean, TIMESTAMP
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import sessionmaker
 import hashlib
 import uuid
-import os 
+import os
 import threading
 from urllib.parse import urlencode
 import base64
-import logging 
+import logging
 import asyncio
 import traceback
 
@@ -22,35 +24,35 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Configuration
-TOKEN = os.getenv("TOKEN", "8018027330:AAGbqSQ5wQvLj2rPGXQ_MOWU3I8z7iUpjPw")
-IMEI_API_KEY = os.getenv("IMEI_API_KEY", "PKZ-HK5K6HMRFAXE5VZLCNW6L")
-TELEGRAM_PROVIDER_TOKEN = os.getenv("TELEGRAM_PROVIDER_TOKEN", "1877036958:TEST:65538b0a37f9013ba8001b53ca6b4c00176ba816")
-BASE_URL = os.getenv("BASE_URL", "https://api.imeichecks.online")
+TOKEN = os.getenv("TOKEN")
+IMEI_API_KEY = os.getenv("IMEI_API_KEY")
+PAYEER_MERCHANT_ID = os.getenv("PAYEER_MERCHANT_ID")
+PAYEER_SECRET_KEY = os.getenv("PAYEER_SECRET_KEY")
+BASE_URL = os.getenv("BASE_URL")
+DATABASE_URL = os.getenv("DATABASE_URL")
 
 IMEI_API_URL = "https://proimei.info/en/prepaid/api"
+PAYEER_PAYMENT_URL = "https://payeer.com/merchant/"
 PRICE = "0.32"
 
+# SQLAlchemy setup
+Base = declarative_base()
+engine = create_engine(DATABASE_URL)
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+class Payment(Base):
+    __tablename__ = "payments"
+    order_id = Column(String, primary_key=True, index=True)
+    user_id = Column(Integer, index=True)
+    imei = Column(String)
+    amount = Column(String)
+    currency = Column(String)
+    paid = Column(Boolean, default=False)
+    created_at = Column(TIMESTAMP)
+
+Base.metadata.create_all(bind=engine)
+
 app = Flask(__name__)
-
-# Database initialization
-def init_db():
-    with sqlite3.connect("payments.db") as conn:
-        c = conn.cursor()
-        c.execute("""
-        CREATE TABLE IF NOT EXISTS payments (
-            order_id TEXT PRIMARY KEY,
-            user_id INTEGER,
-            imei TEXT,
-            amount TEXT,
-            currency TEXT,
-            paid BOOLEAN DEFAULT 0,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-        """)
-        conn.commit()
-        logger.info("Database initialized")
-
-init_db()
 
 # Bot setup
 application = Application.builder().token(TOKEN).build()
@@ -58,71 +60,65 @@ user_states = {}
 
 def register_handlers():
     async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        keyboard = [[KeyboardButton("\U0001F50D Check IMEI")], [KeyboardButton("\u2753 Help")]]
+        keyboard = [[KeyboardButton("🔍 Check IMEI")], [KeyboardButton("❓ Help")]]
         reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
-        await update.message.reply_text("\U0001F44B Welcome! Choose an option:", reply_markup=reply_markup)
+        await update.message.reply_text("👋 Welcome! Choose an option:", reply_markup=reply_markup)
 
     async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        await update.message.reply_text("\u2139\ufe0f Use the 'Check IMEI' button and follow instructions to proceed.")
+        await update.message.reply_text("ℹ️ Use the 'Check IMEI' button and follow instructions to proceed.")
 
     async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = update.effective_user.id
         text = update.message.text
 
-        if text == "\U0001F50D Check IMEI":
+        if text == "🔍 Check IMEI":
             user_states[user_id] = "awaiting_imei"
-            await update.message.reply_text("\U0001F522 Please enter your 15-digit IMEI number.")
-        elif text == "\u2753 Help":
-            await help_cmd(update, context)
+            await update.message.reply_text("🔢 Please enter your 15-digit IMEI number.")
+        elif text == "❓ Help":
+            await update.message.reply_text("ℹ️ Use the 'Check IMEI' button and follow instructions to proceed.")
         elif user_states.get(user_id) == "awaiting_imei":
             imei = text.strip()
             if not imei.isdigit() or len(imei) != 15:
-                await update.message.reply_text("\u274C Invalid IMEI. It must be 15 digits.")
+                await update.message.reply_text("❌ Invalid IMEI. It must be 15 digits.")
                 return
 
             order_id = str(uuid.uuid4())
-            with sqlite3.connect("payments.db") as conn:
-                c = conn.cursor()
-                c.execute("INSERT INTO payments (order_id, user_id, imei, amount, currency, paid) VALUES (?, ?, ?, ?, ?, ?)",
-                          (order_id, user_id, imei, PRICE, "USD", False))
-                conn.commit()
+            db = SessionLocal()
+            db.add(Payment(order_id=order_id, user_id=user_id, imei=imei, amount=PRICE, currency="USD", paid=False))
+            db.commit()
+            db.close()
 
-            prices = [LabeledPrice("IMEI Check", int(float(PRICE) * 100))]
-            await context.bot.send_invoice(
-                chat_id=user_id,
-                title="IMEI Check",
-                description="Payment for IMEI report",
-                payload=order_id,
-                provider_token=TELEGRAM_PROVIDER_TOKEN,
-                currency="USD",
-                prices=prices,
-                start_parameter="imei-check"
+            desc = f"IMEI Check for {imei}"
+            m_desc = base64.b64encode(desc.encode()).decode()
+            sign_string = f"{PAYEER_MERCHANT_ID}:{order_id}:{PRICE}:USD:{m_desc}:{PAYEER_SECRET_KEY}"
+            m_sign = hashlib.sha256(sign_string.encode()).hexdigest().upper()
+
+            payment_data = {
+                "m_shop": PAYEER_MERCHANT_ID,
+                "m_orderid": order_id,
+                "m_amount": PRICE,
+                "m_curr": "USD",
+                "m_desc": m_desc,
+                "m_sign": m_sign,
+                "m_status_url": f"{BASE_URL}/payeer",
+                "m_success_url": f"{BASE_URL}/success?m_orderid={order_id}",
+                "m_fail_url": f"{BASE_URL}/fail"
+            }
+
+            payment_url = f"{PAYEER_PAYMENT_URL}?{urlencode(payment_data)}"
+            keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("💳 Pay $0.32 USD", url=payment_url)]])
+
+            await update.message.reply_text(
+                f"📱 IMEI: {imei}\nTo receive your result, please complete payment:",
+                reply_markup=keyboard
             )
             user_states[user_id] = None
         else:
-            await update.message.reply_text("\u2757 Please use the menu or /start to begin.")
-
-    async def successful_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        user_id = update.effective_user.id
-        order_id = update.message.successful_payment.invoice_payload
-
-        with sqlite3.connect("payments.db") as conn:
-            c = conn.cursor()
-            c.execute("SELECT imei, paid FROM payments WHERE order_id = ?", (order_id,))
-            row = c.fetchone()
-            if row:
-                imei, paid = row
-                if not paid:
-                    c.execute("UPDATE payments SET paid = 1 WHERE order_id = ?", (order_id,))
-                    conn.commit()
-                    threading.Thread(target=send_imei_result, args=(user_id, imei)).start()
-
-        await update.message.reply_text("\u2705 Thank you! Payment successful. Your IMEI report is being prepared...")
+            await update.message.reply_text("❗ Please use the menu or /start to begin.")
 
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("help", help_cmd))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler))
-    application.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment))
 
 register_handlers()
 
@@ -147,6 +143,51 @@ def telegram_webhook():
         logger.error(f"Error: {str(e)}")
         logger.error(traceback.format_exc())
         return "Error", 500
+
+@app.route("/payeer", methods=["POST"])
+def payeer_callback():
+    try:
+        form = request.form.to_dict()
+        logger.info(f"Received Payeer callback: {form}")
+
+        order_id = form.get("m_orderid")
+        if form.get("m_status") != "success":
+            return "Payment not successful", 400
+
+        db = SessionLocal()
+        payment = db.query(Payment).filter(Payment.order_id == order_id).first()
+        if payment and not payment.paid:
+            payment.paid = True
+            db.commit()
+            threading.Thread(target=send_imei_result, args=(payment.user_id, payment.imei)).start()
+        db.close()
+
+        return "OK"
+    except Exception as e:
+        logger.error(f"Callback Error: {str(e)}")
+        return "Error", 500
+
+@app.route("/success")
+def success():
+    order_id = request.args.get("m_orderid")
+    if not order_id:
+        return render_template("fail.html")
+
+    try:
+        db = SessionLocal()
+        payment = db.query(Payment).filter(Payment.order_id == order_id).first()
+        if payment and not payment.paid:
+            payment.paid = True
+            db.commit()
+            threading.Thread(target=send_imei_result, args=(payment.user_id, payment.imei)).start()
+        db.close()
+        return render_template("success.html")
+    except:
+        return render_template("fail.html")
+
+@app.route("/fail")
+def fail():
+    return render_template("fail.html")
 
 def send_imei_result(user_id, imei):
     try:
