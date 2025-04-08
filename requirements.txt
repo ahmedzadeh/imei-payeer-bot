@@ -4,3 +4,4 @@ SQLAlchemy==2.0.21
 requests
 httpx
 psycopg2-binary
+nest_asyncio
