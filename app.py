@@ -5,6 +5,7 @@ from telegram.ext import Application, CommandHandler, MessageHandler, ContextTyp
 from sqlalchemy import create_engine, Column, String, Integer, Boolean, TIMESTAMP
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
+from datetime import datetime
 import hashlib
 import uuid
 import os
@@ -48,7 +49,7 @@ class Payment(Base):
     amount = Column(String)
     currency = Column(String)
     paid = Column(Boolean, default=False)
-    created_at = Column(TIMESTAMP)
+    created_at = Column(TIMESTAMP, default=datetime.utcnow)
 
 Base.metadata.create_all(bind=engine)
 
@@ -130,14 +131,11 @@ def telegram_webhook():
 
         update = Update.de_json(update_json, application.bot)
 
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-
         async def handle():
             await application.initialize()
             await application.process_update(update)
 
-        loop.run_until_complete(handle())
+        asyncio.run(handle())
         return "OK"
     except Exception as e:
         logger.error(f"Error: {str(e)}")
