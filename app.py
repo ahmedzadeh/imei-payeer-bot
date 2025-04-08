@@ -59,6 +59,13 @@ app = Flask(__name__)
 application = Application.builder().token(TOKEN).build()
 user_states = {}
 
+# Start polling in the background
+async def run_bot():
+    await application.initialize()
+    await application.start()
+
+asyncio.get_event_loop().create_task(run_bot())
+
 def register_handlers():
     async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         keyboard = [[KeyboardButton("🔍 Check IMEI")], [KeyboardButton("❓ Help")]]
@@ -130,12 +137,8 @@ def telegram_webhook():
         logger.info(f"Received Telegram update: {update_json}")
 
         update = Update.de_json(update_json, application.bot)
+        application.update_queue.put_nowait(update)
 
-        async def handle():
-            await application.initialize()
-            await application.process_update(update)
-
-        asyncio.run(handle())
         return "OK"
     except Exception as e:
         logger.error(f"Error: {str(e)}")
