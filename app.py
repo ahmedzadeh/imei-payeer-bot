@@ -59,13 +59,6 @@ app = Flask(__name__)
 application = Application.builder().token(TOKEN).build()
 user_states = {}
 
-# Start polling in the background
-async def run_bot():
-    await application.initialize()
-    await application.start()
-
-asyncio.get_event_loop().create_task(run_bot())
-
 def register_handlers():
     async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         keyboard = [[KeyboardButton("🔍 Check IMEI")], [KeyboardButton("❓ Help")]]
@@ -221,6 +214,7 @@ def send_imei_result(user_id, imei):
 
 async def set_webhook_async():
     try:
+        await application.initialize()
         webhook_url = f"{BASE_URL}/{TOKEN}"
         await application.bot.set_webhook(url=webhook_url)
         logger.info(f"Webhook set to {webhook_url}")
