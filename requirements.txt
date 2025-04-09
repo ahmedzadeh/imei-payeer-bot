@@ -1,7 +1,5 @@
-python-telegram-bot==20.6
-Flask==2.2.5
-SQLAlchemy==2.0.21
+python-telegram-bot==20.7
+Flask
 requests
 httpx
-psycopg2-binary
-nest_asyncio
+
