@@ -58,9 +58,6 @@ app = Flask(__name__)
 # Bot setup
 application = Application.builder().token(TOKEN).build()
 
-async def handle_update(update: Update):
-    await application.update_queue.put(update)
-
 @app.route(f"/{TOKEN}", methods=["POST"])
 def telegram_webhook():
     try:
@@ -68,7 +65,12 @@ def telegram_webhook():
         logger.info(f"Received Telegram update: {update_json}")
 
         update = Update.de_json(update_json, application.bot)
-        asyncio.run(handle_update(update))
+
+        async def process():
+            await application.initialize()
+            await application.process_update(update)
+
+        asyncio.run(process())
         return "OK"
     except Exception as e:
         logger.error(f"Webhook processing error: {str(e)}")
