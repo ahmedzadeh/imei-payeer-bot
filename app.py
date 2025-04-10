@@ -8,7 +8,7 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, WebAppI
 from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, filters
 
 # ==== Config ====
-TOKEN = "your_bot_token_here"
+TOKEN = "8018027330:AAGbqSQ5wQvLj2rPGXQ_MOWU3I8z7iUpjPw"
 PAYEER_MERCHANT_ID = "2210021863"
 PAYEER_SECRET_KEY = "123"
 IMEI_API_KEY = "PKZ-HK5K6HMRFAXE5VZLCNW6L"
