@@ -5,7 +5,7 @@ import asyncio
 import base64
 import logging
 from flask import Flask, request
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, Bot
+from telegram import Update, Bot
 from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, filters
 from urllib.parse import urlencode
 
@@ -142,8 +142,14 @@ async def check_imei(update: Update, context: ContextTypes.DEFAULT_TYPE):
     }
 
     payment_url = f"{PAYEER_PAYMENT_URL}?{urlencode(payment_data)}"
-    reply_markup = InlineKeyboardMarkup([[InlineKeyboardButton(f"💳 Pay ${PRICE}", url=payment_url)]])
-    await update.message.reply_text("💳 Please pay to receive your IMEI result:", reply_markup=reply_markup)
+
+    await update.message.reply_text(
+        f"📱 *IMEI:* `{imei}`\n"
+        f"💳 *Amount:* `${PRICE} USD`\n\n"
+        f"🔗 *Click to pay:* [Open Payment Page]({payment_url})\n\n"
+        "_Once the payment is confirmed, you'll receive your IMEI result here._",
+        parse_mode="Markdown"
+    )
 
 async def send_results(user_id: int, imei: str):
     try:
