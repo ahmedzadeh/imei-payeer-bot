@@ -4,6 +4,7 @@ import asyncio
 import requests
 import logging
 import os
+import html
 from flask import Flask, request, jsonify
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo, ReplyKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, filters
@@ -100,13 +101,17 @@ async def check_imei(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "paid": False
     }
 
+    # Escape to prevent HTML parse issues
+    imei_html = html.escape(imei)
+    price_html = html.escape(PRICE)
+
     webapp_url = f"{WEB_URL}/pay.html?order_id={order_id}&imei={imei}"
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("💳 Pay via WebApp", web_app=WebAppInfo(url=webapp_url))]
     ])
 
-    message = f"""📱 <b>IMEI:</b> <code>{imei}</code>
-💳 <b>Price:</b> <code>{PRICE} USD</code>
+    message = f"""📱 <b>IMEI:</b> <code>{imei_html}</code>
+💳 <b>Price:</b> <code>{price_html} USD</code>
 
 Press the button below to pay:"""
 
@@ -148,13 +153,13 @@ async def send_results(user_id: int, imei: str):
 
         msg = "\n".join([
             "✅ <b>IMEI Info:</b>",
-            f"▫️<b>IMEI:</b> {data.get('IMEI', 'N/A')}",
-            f"▫️<b>IMEI2:</b> {data.get('IMEI2', 'N/A')}",
-            f"▫️<b>Serial:</b> {data.get('Serial Number', 'N/A')}",
-            f"▫️<b>Purchase:</b> {data.get('Date of purchase', 'N/A')}",
-            f"▫️<b>Coverage:</b> {data.get('Repairs & Service Coverage', 'N/A')}",
-            f"▫️<b>Replaced:</b> {data.get('is replaced', 'N/A')}",
-            f"▫️<b>SIM Lock:</b> {data.get('SIM Lock', 'N/A')}"
+            f"▫️<b>IMEI:</b> {html.escape(data.get('IMEI', 'N/A'))}",
+            f"▫️<b>IMEI2:</b> {html.escape(data.get('IMEI2', 'N/A'))}",
+            f"▫️<b>Serial:</b> {html.escape(data.get('Serial Number', 'N/A'))}",
+            f"▫️<b>Purchase:</b> {html.escape(data.get('Date of purchase', 'N/A'))}",
+            f"▫️<b>Coverage:</b> {html.escape(data.get('Repairs & Service Coverage', 'N/A'))}",
+            f"▫️<b>Replaced:</b> {html.escape(data.get('is replaced', 'N/A'))}",
+            f"▫️<b>SIM Lock:</b> {html.escape(data.get('SIM Lock', 'N/A'))}"
         ])
 
         await bot.send_message(chat_id=user_id, text=msg, parse_mode="HTML")
