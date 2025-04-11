@@ -78,7 +78,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [["🔍 Check IMEI"], ["❓ Help"]]
     reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
     await update.message.reply_text(
-        "👋 Welcome! Press '🔍Check IMEI' to start:\n\n🔢 Please enter your 15-digit IMEI number.",
+        "👋 Welcome! Press '🔍Check IMEI' to start",
         reply_markup=reply_markup
     )
 
@@ -138,13 +138,13 @@ async def send_results(user_id: int, imei: str):
         data = response.json()
         msg = "\n".join([
             "✅ *IMEI Info:*",
-            f"IMEI: {data.get('IMEI', 'N/A')}",
-            f"IMEI2: {data.get('IMEI2', 'N/A')}",
-            f"Serial: {data.get('Serial Number', 'N/A')}",
-            f"Purchase: {data.get('Date of purchase', 'N/A')}",
-            f"Coverage: {data.get('Repairs & Service Coverage', 'N/A')}",
-            f"Replaced: {data.get('is replaced', 'N/A')}",
-            f"SIM Lock: {data.get('SIM Lock', 'N/A')}",
+            f"▫️IMEI: {data.get('IMEI', 'N/A')}",
+            f"▫️IMEI2: {data.get('IMEI2', 'N/A')}",
+            f"▫️Serial: {data.get('Serial Number', 'N/A')}",
+            f"▫️Purchase: {data.get('Date of purchase', 'N/A')}",
+            f"▫️Coverage: {data.get('Repairs & Service Coverage', 'N/A')}",
+            f"▫️Replaced: {data.get('is replaced', 'N/A')}",
+            f"▫️SIM Lock: {data.get('SIM Lock', 'N/A')}",
         ])
         await bot.send_message(chat_id=user_id, text=msg, parse_mode="Markdown")
     except Exception as e:
