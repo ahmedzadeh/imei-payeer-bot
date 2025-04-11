@@ -6,7 +6,6 @@ from telegram.ext import Application, CommandHandler, MessageHandler, ContextTyp
 import hashlib
 import uuid
 import os
-import threading
 from urllib.parse import urlencode
 import base64
 import logging
@@ -33,8 +32,9 @@ PAYEER_PAYMENT_URL = "https://payeer.com/merchant/"
 PRICE = "0.32"
 
 app = Flask(__name__)
+application = Application.builder().token(TOKEN).build()
+user_states = {}
 
-# Database initialization
 def init_db():
     with sqlite3.connect("payments.db") as conn:
         c = conn.cursor()
@@ -54,11 +54,6 @@ def init_db():
 
 init_db()
 
-# Bot setup
-application = Application.builder().token(TOKEN).build()
-user_states = {}
-
-# Handlers
 def register_handlers():
     async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         keyboard = [[KeyboardButton("🔍 Check IMEI")], [KeyboardButton("❓ Help")]]
@@ -129,20 +124,21 @@ def telegram_webhook():
     try:
         update_json = request.get_json(force=True)
         logger.info(f"Received Telegram update: {update_json}")
-
         update = Update.de_json(update_json, application.bot)
-
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
 
         async def handle():
             await application.initialize()
             await application.process_update(update)
 
-        loop.run_until_complete(handle())
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            loop.create_task(handle())
+        else:
+            asyncio.run(handle())
+
         return "OK"
     except Exception as e:
-        logger.error(f"Error: {str(e)}")
+        logger.error(f"Webhook Error: {str(e)}")
         logger.error(traceback.format_exc())
         return "Error", 500
 
@@ -165,7 +161,7 @@ def payeer_callback():
                 if not paid:
                     c.execute("UPDATE payments SET paid = 1 WHERE order_id = ?", (order_id,))
                     conn.commit()
-                    threading.Thread(target=send_imei_result, args=(user_id, imei)).start()
+                    send_imei_result(user_id, imei)
         return "OK"
     except Exception as e:
         logger.error(f"Callback Error: {str(e)}")
@@ -173,24 +169,7 @@ def payeer_callback():
 
 @app.route("/success")
 def success():
-    order_id = request.args.get("m_orderid")
-    if not order_id:
-        return render_template("fail.html")
-
-    try:
-        with sqlite3.connect("payments.db") as conn:
-            c = conn.cursor()
-            c.execute("SELECT user_id, imei, paid FROM payments WHERE order_id = ?", (order_id,))
-            row = c.fetchone()
-            if row:
-                user_id, imei, paid = row
-                if not paid:
-                    c.execute("UPDATE payments SET paid = 1 WHERE order_id = ?", (order_id,))
-                    conn.commit()
-                    threading.Thread(target=send_imei_result, args=(user_id, imei)).start()
-        return render_template("success.html")
-    except:
-        return render_template("fail.html")
+    return render_template("success.html")
 
 @app.route("/fail")
 def fail():
@@ -232,7 +211,6 @@ def send_imei_result(user_id, imei):
             asyncio.run(send())
     except Exception as e:
         logger.error(f"Fallback loop scheduling failed: {str(e)}")
-
 
 async def set_webhook_async():
     try:
