@@ -6,14 +6,12 @@ from telegram.ext import Application, CommandHandler, MessageHandler, ContextTyp
 import hashlib
 import uuid
 import os
-import threading
-from urllib.parse import urlencode
-import base64
 import logging
 import asyncio
+import base64
 import traceback
 
-# Logging setup
+# === Logging setup ===
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s",
@@ -21,7 +19,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Configuration
+# === Configuration ===
 TOKEN = os.getenv("TOKEN", "8018027330:AAE6Se5mieBz4YzRESLJRj-5p3M1KHAQ6Go")
 IMEI_API_KEY = os.getenv("IMEI_API_KEY", "PKZ-HK5K6HMRFAXE5VZLCNW6L")
 PAYEER_MERCHANT_ID = os.getenv("PAYEER_MERCHANT_ID", "2210021863")
@@ -32,9 +30,11 @@ IMEI_API_URL = "https://proimei.info/en/prepaid/api"
 PAYEER_PAYMENT_URL = "https://payeer.com/merchant/"
 PRICE = "0.32"
 
+# === Flask + Telegram setup ===
 app = Flask(__name__)
+application = Application.builder().token(TOKEN).build()
 
-# Database initialization
+# === Initialize database ===
 def init_db():
     with sqlite3.connect("payments.db") as conn:
         c = conn.cursor()
@@ -53,12 +53,9 @@ def init_db():
         logger.info("Database initialized")
 
 init_db()
-
-# Bot setup
-application = Application.builder().token(TOKEN).build()
 user_states = {}
 
-# Handlers
+# === Telegram Handlers ===
 def register_handlers():
     async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         keyboard = [[KeyboardButton("🔍 Check IMEI")], [KeyboardButton("❓ Help")]]
@@ -124,12 +121,12 @@ def register_handlers():
 
 register_handlers()
 
+# === Webhook routes ===
 @app.route(f"/{TOKEN}", methods=["POST"])
 def telegram_webhook():
     try:
         update_json = request.get_json(force=True)
         logger.info(f"Received Telegram update: {update_json}")
-
         update = Update.de_json(update_json, application.bot)
 
         loop = asyncio.new_event_loop()
@@ -142,94 +139,9 @@ def telegram_webhook():
         loop.run_until_complete(handle())
         return "OK"
     except Exception as e:
-        logger.error(f"Error: {str(e)}")
+        logger.error(f"Webhook Error: {str(e)}")
         logger.error(traceback.format_exc())
         return "Error", 500
-
-@app.route("/payeer", methods=["POST"])
-def payeer_callback():
-    try:
-        form = request.form.to_dict()
-        logger.info(f"Received Payeer callback: {form}")
-
-        order_id = form.get("m_orderid")
-        if form.get("m_status") != "success":
-            return "Payment not successful", 400
-
-        with sqlite3.connect("payments.db") as conn:
-            c = conn.cursor()
-            c.execute("SELECT user_id, imei, paid FROM payments WHERE order_id = ?", (order_id,))
-            row = c.fetchone()
-            if row:
-                user_id, imei, paid = row
-                if not paid:
-                    c.execute("UPDATE payments SET paid = 1 WHERE order_id = ?", (order_id,))
-                    conn.commit()
-                    threading.Thread(target=send_imei_result, args=(user_id, imei)).start()
-        return "OK"
-    except Exception as e:
-        logger.error(f"Callback Error: {str(e)}")
-        return "Error", 500
-
-@app.route("/success")
-def success():
-    order_id = request.args.get("m_orderid")
-    if not order_id:
-        return render_template("fail.html")
-
-    try:
-        with sqlite3.connect("payments.db") as conn:
-            c = conn.cursor()
-            c.execute("SELECT user_id, imei, paid FROM payments WHERE order_id = ?", (order_id,))
-            row = c.fetchone()
-            if row:
-                user_id, imei, paid = row
-                if not paid:
-                    c.execute("UPDATE payments SET paid = 1 WHERE order_id = ?", (order_id,))
-                    conn.commit()
-                    threading.Thread(target=send_imei_result, args=(user_id, imei)).start()
-        return render_template("success.html")
-    except:
-        return render_template("fail.html")
-
-@app.route("/fail")
-def fail():
-    return render_template("fail.html")
-
-def send_imei_result(user_id, imei):
-    async def send():
-        try:
-            print("✅ Executing IMEI result sender...")
-            params = {"api_key": IMEI_API_KEY, "checker": "simlock2", "number": imei}
-            res = requests.get(IMEI_API_URL, params=params, timeout=15)
-            res.raise_for_status()
-            logger.info(f"API response: {res.text}")
-
-            data = res.json()
-            info = data.get("data", data)
-
-            msg = "✅ *Payment successful!*\n\n"
-            msg += "📱 *IMEI Info:*\n"
-            msg += f"🔹 *IMEI:* {info.get('IMEI', 'N/A')}\n"
-            msg += f"🔹 *IMEI2:* {info.get('IMEI2', 'N/A')}\n"
-            msg += f"🔹 *MEID:* {info.get('MEID', 'N/A')}\n"
-            msg += f"🔹 *Serial:* {info.get('Serial Number', 'N/A')}\n"
-            msg += f"🔹 *Desc:* {info.get('Description', 'N/A')}\n"
-            msg += f"🔹 *Purchase:* {info.get('Date of purchase', 'N/A')}\n"
-            msg += f"🔹 *Coverage:* {info.get('Repairs & Service Coverage', 'N/A')}\n"
-            msg += f"🔹 *Replaced:* {info.get('is replaced', 'N/A')}\n"
-            msg += f"🔹 *SIM Lock:* {info.get('SIM Lock', 'N/A')}"
-
-            await application.bot.send_message(chat_id=user_id, text=msg, parse_mode="Markdown")
-        except Exception as e:
-            logger.error(f"Async send error: {str(e)}")
-
-    # Run the coroutine thread-safely using the bot's loop
-    try:
-        asyncio.run_coroutine_threadsafe(send(), application.loop)
-    except Exception as e:
-        logger.error(f"Error scheduling coroutine: {str(e)}")
-
 
 @app.route("/payeer", methods=["POST"])
 def payeer_callback():
@@ -258,8 +170,49 @@ def payeer_callback():
         logger.error(f"Callback Error: {str(e)}")
         return "Error", 500
 
+@app.route("/success")
+def success():
+    return render_template("success.html")
 
+@app.route("/fail")
+def fail():
+    return render_template("fail.html")
 
+# === Send IMEI Result ===
+def send_imei_result(user_id, imei):
+    async def send():
+        try:
+            print("✅ Executing IMEI result sender...")
+            params = {"api_key": IMEI_API_KEY, "checker": "simlock2", "number": imei}
+            res = requests.get(IMEI_API_URL, params=params, timeout=15)
+            res.raise_for_status()
+            logger.info(f"API response: {res.text}")
+
+            data = res.json()
+            info = data.get("data", data)
+
+            msg = "✅ *Payment successful!*\n\n"
+            msg += "📱 *IMEI Info:*\n"
+            msg += f"🔹 *IMEI:* {info.get('IMEI', 'N/A')}\n"
+            msg += f"🔹 *IMEI2:* {info.get('IMEI2', 'N/A')}\n"
+            msg += f"🔹 *MEID:* {info.get('MEID', 'N/A')}\n"
+            msg += f"🔹 *Serial:* {info.get('Serial Number', 'N/A')}\n"
+            msg += f"🔹 *Desc:* {info.get('Description', 'N/A')}\n"
+            msg += f"🔹 *Purchase:* {info.get('Date of purchase', 'N/A')}\n"
+            msg += f"🔹 *Coverage:* {info.get('Repairs & Service Coverage', 'N/A')}\n"
+            msg += f"🔹 *Replaced:* {info.get('is replaced', 'N/A')}\n"
+            msg += f"🔹 *SIM Lock:* {info.get('SIM Lock', 'N/A')}"
+
+            await application.bot.send_message(chat_id=user_id, text=msg, parse_mode="Markdown")
+        except Exception as e:
+            logger.error(f"Async send error: {str(e)}")
+
+    try:
+        asyncio.run_coroutine_threadsafe(send(), application.loop)
+    except Exception as e:
+        logger.error(f"Error scheduling coroutine: {str(e)}")
+
+# === Webhook setup ===
 async def set_webhook_async():
     try:
         webhook_url = f"{BASE_URL}/{TOKEN}"
