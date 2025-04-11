@@ -3,30 +3,29 @@ import uuid
 import asyncio
 import requests
 import logging
+import os
 from flask import Flask, request, jsonify
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
 from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, filters
 
-# ==== Config ====
-TOKEN = "8018027330:AAGbqSQ5wQvLj2rPGXQ_MOWU3I8z7iUpjPw"
-PAYEER_MERCHANT_ID = "2210021863"
-PAYEER_SECRET_KEY = "123"
-IMEI_API_KEY = "PKZ-HK5K6HMRFAXE5VZLCNW6L"
-BASE_URL = "https://api.imeichecks.online"
-WEB_URL = "https://imeichecks.online"
+# ==== Secure Env Setup ====
+TOKEN = os.getenv("TOKEN")
+IMEI_API_KEY = os.getenv("IMEI_API_KEY")
+PAYEER_MERCHANT_ID = os.getenv("PAYEER_MERCHANT_ID")
+PAYEER_SECRET_KEY = os.getenv("PAYEER_SECRET_KEY")
+BASE_URL = os.getenv("BASE_URL")  # example: https://api.imeichecks.online
+WEB_URL = os.getenv("WEB_URL")    # example: https://imeichecks.online
 PRICE = "0.32"
 
-# ==== App setup ====
+# ==== Flask + Telegram Init ====
 app = Flask(__name__)
 loop = asyncio.new_event_loop()
 asyncio.set_event_loop(loop)
 application = Application.builder().token(TOKEN).build()
 bot = application.bot
 
-# ==== In-memory order tracking ====
 pending_orders = {}
 
-# ==== Routes ====
 @app.route("/")
 def index():
     return "Bot is running."
@@ -73,7 +72,7 @@ def payment_status():
     order = pending_orders.get(order_id)
     return jsonify({"paid": bool(order and order["paid"])})
 
-# ==== Telegram bot handlers ====
+# ==== Bot Handlers ====
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Send /check <IMEI> to begin.")
 
@@ -125,7 +124,7 @@ async def send_results(user_id: int, imei: str):
     except Exception as e:
         await bot.send_message(chat_id=user_id, text=f"❌ Error: {e}")
 
-# ==== Setup bot handlers ====
+# ==== Launch ====
 application.add_handler(CommandHandler("start", start))
 application.add_handler(CommandHandler("check", check_imei))
 application.add_handler(MessageHandler(filters.ALL, lambda u, c: None))
