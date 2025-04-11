@@ -223,8 +223,8 @@ def send_imei_result(user_id, imei):
         except Exception as e:
             logger.error(f"Async send error: {str(e)}")
 
-    # Launch in event loop correctly
-    application.create_task(send())
+    # Run the coroutine thread-safely using the bot's loop
+    asyncio.run_coroutine_threadsafe(send(), application.loop)
 
 
 async def set_webhook_async():
