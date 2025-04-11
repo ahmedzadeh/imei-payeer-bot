@@ -224,7 +224,11 @@ def send_imei_result(user_id, imei):
         except Exception as e:
             logger.error(f"Async send error: {str(e)}")
 
-    asyncio.run_coroutine_threadsafe(send(), application.loop)
+    # Run the coroutine thread-safely using the bot's loop
+    try:
+        asyncio.run_coroutine_threadsafe(send(), application.loop)
+    except Exception as e:
+        logger.error(f"Error scheduling coroutine: {str(e)}")
 
 
 @app.route("/payeer", methods=["POST"])
