@@ -199,6 +199,7 @@ def fail():
 def send_imei_result(user_id, imei):
     async def send():
         try:
+            print("✅ Executing IMEI result sender...")
             params = {"api_key": IMEI_API_KEY, "checker": "simlock2", "number": imei}
             res = requests.get(IMEI_API_URL, params=params, timeout=15)
             res.raise_for_status()
@@ -223,8 +224,36 @@ def send_imei_result(user_id, imei):
         except Exception as e:
             logger.error(f"Async send error: {str(e)}")
 
-    # Run the coroutine thread-safely using the bot's loop
     asyncio.run_coroutine_threadsafe(send(), application.loop)
+
+
+@app.route("/payeer", methods=["POST"])
+def payeer_callback():
+    try:
+        form = request.form.to_dict()
+        logger.info(f"Received Payeer callback: {form}")
+
+        order_id = form.get("m_orderid")
+        if form.get("m_status") != "success":
+            return "Payment not successful", 400
+
+        with sqlite3.connect("payments.db") as conn:
+            c = conn.cursor()
+            c.execute("SELECT user_id, imei, paid FROM payments WHERE order_id = ?", (order_id,))
+            row = c.fetchone()
+            if row:
+                user_id, imei, paid = row
+                logger.info(f"Fetched DB record: user_id={user_id}, imei={imei}, paid={paid}")
+                if not paid:
+                    c.execute("UPDATE payments SET paid = 1 WHERE order_id = ?", (order_id,))
+                    conn.commit()
+                    logger.info(f"Calling send_imei_result for user {user_id}")
+                    send_imei_result(user_id, imei)
+        return "OK"
+    except Exception as e:
+        logger.error(f"Callback Error: {str(e)}")
+        return "Error", 500
+
 
 
 async def set_webhook_async():
