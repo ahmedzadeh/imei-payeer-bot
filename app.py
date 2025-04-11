@@ -32,6 +32,8 @@ IMEI_API_URL = "https://proimei.info/en/prepaid/api"
 PAYEER_PAYMENT_URL = "https://payeer.com/merchant/"
 PRICE = "0.32"
 
+ADMIN_IDS = {2103379072, 6927331058}
+
 app = Flask(__name__)
 
 # Database initialization
@@ -102,6 +104,31 @@ def register_handlers():
 
         await update.message.reply_text(help_text, parse_mode="Markdown", reply_markup=reply_markup)
 
+    async def stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if update.effective_user.id not in ADMIN_IDS:
+            await update.message.reply_text("🚫 You are not authorized to view stats.")
+            return
+
+        with sqlite3.connect("payments.db") as conn:
+            c = conn.cursor()
+            c.execute("SELECT COUNT(*) FROM payments WHERE paid = 1")
+            total_paid = c.fetchone()[0]
+
+            c.execute("SELECT COUNT(*) FROM payments")
+            total_requests = c.fetchone()[0]
+
+            c.execute("SELECT DISTINCT user_id FROM payments")
+            unique_users = len(c.fetchall())
+
+        msg = (
+            "📊 *Bot Usage Stats:*\n"
+            f"• Total IMEI checks: *{total_requests}*\n"
+            f"• Successful payments: *{total_paid}*\n"
+            f"• Unique users: *{unique_users}*"
+        )
+
+        await update.message.reply_text(msg, parse_mode="Markdown")
+
     async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = update.effective_user.id
         text = update.message.text
@@ -156,9 +183,11 @@ def register_handlers():
 
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("help", help_cmd))
+    application.add_handler(CommandHandler("stats", stats_cmd))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler))
 
 register_handlers()
+
 
 @app.route(f"/{TOKEN}", methods=["POST"])
 def telegram_webhook():
