@@ -130,12 +130,9 @@ def telegram_webhook():
             await application.initialize()
             await application.process_update(update)
 
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            loop.create_task(handle())
-        else:
-            asyncio.run(handle())
-
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        loop.run_until_complete(handle())
         return "OK"
     except Exception as e:
         logger.error(f"Webhook Error: {str(e)}")
