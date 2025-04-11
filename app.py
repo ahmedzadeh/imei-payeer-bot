@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 # Configuration
 TOKEN = os.getenv("TOKEN", "8018027330:AAE6Se5mieBz4YzRESLJRj-5p3M1KHAQ6Go")
-IMEI_API_KEY = os.getenv("IMEI_API_KEY", "PKZ-HK5K6HMRFAXE5VZLCNW6L")
+IMEI_API_KEY = os.getenv("IMEI_API_KEY", "8AH-WSM-ARE-3KL-VG8-ME7-MV6-W8K")
 IMEI_API_URL = "https://proimei.info/en/prepaid/api"
 BASE_URL = os.getenv("BASE_URL", "https://api.imeichecks.online")
 
@@ -57,7 +57,7 @@ def send_imei_result(user_id, imei):
     async def send():
         try:
             print("✅ Sending IMEI result...")
-            params = {"api_key": IMEI_API_KEY, "checker": "simlock2", "number": imei}
+            params = {"api_key": IMEI_API_KEY, "number": imei}  # Removed checker for fallback
             logger.info(f"Querying IMEI API with params: {params}")
             res = requests.get(IMEI_API_URL, params=params, timeout=15)
             res.raise_for_status()
