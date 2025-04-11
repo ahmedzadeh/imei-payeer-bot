@@ -22,16 +22,11 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Configuration
-required_env = ["TOKEN", "IMEI_API_KEY", "PAYEER_MERCHANT_ID", "PAYEER_SECRET_KEY", "BASE_URL"]
-for var in required_env:
-    if not os.getenv(var):
-        raise EnvironmentError(f"Missing required environment variable: {var}")
-
-TOKEN = os.getenv("TOKEN")
-IMEI_API_KEY = os.getenv("IMEI_API_KEY")
-PAYEER_MERCHANT_ID = os.getenv("PAYEER_MERCHANT_ID")
-PAYEER_SECRET_KEY = os.getenv("PAYEER_SECRET_KEY")
-BASE_URL = os.getenv("BASE_URL")
+TOKEN = os.getenv("TOKEN", "8018027330:AAE6Se5mieBz4YzRESLJRj-5p3M1KHAQ6Go")
+IMEI_API_KEY = os.getenv("IMEI_API_KEY", "8AH-WSM-ARE-3KL-VG8-ME7-MV6-W8K")
+PAYEER_MERCHANT_ID = os.getenv("PAYEER_MERCHANT_ID", "2210021863")
+PAYEER_SECRET_KEY = os.getenv("PAYEER_SECRET_KEY", "123")
+BASE_URL = os.getenv("BASE_URL", "https://api.imeichecks.online")
 
 IMEI_API_URL = "https://proimei.info/en/prepaid/api"
 PAYEER_PAYMENT_URL = "https://payeer.com/merchant/"
@@ -63,12 +58,16 @@ init_db()
 application = Application.builder().token(TOKEN).build()
 user_states = {}
 
+# Main menu keyboard
+def main_menu_keyboard():
+    return ReplyKeyboardMarkup(
+        [[KeyboardButton("🔍 Check IMEI")], [KeyboardButton("❓ Help")]], resize_keyboard=True
+    )
+
 # Handlers
 def register_handlers():
     async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        keyboard = [[KeyboardButton("🔍 Check IMEI")], [KeyboardButton("❓ Help")]]
-        reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
-        await update.message.reply_text("👋 Welcome! Choose an option:", reply_markup=reply_markup)
+        await update.message.reply_text("👋 Welcome! Choose an option:", reply_markup=main_menu_keyboard())
 
     async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         keyboard = [[KeyboardButton("🔙 Back")]]
@@ -108,9 +107,7 @@ def register_handlers():
         text = update.message.text
 
         if text == "🔙 Back":
-            keyboard = [[KeyboardButton("🔍 Check IMEI")], [KeyboardButton("❓ Help")]]
-            reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
-            await update.message.reply_text("🏠 Back to main menu. Please choose an option:", reply_markup=reply_markup)
+            await update.message.reply_text("🏠 Back to main menu. Please choose an option:", reply_markup=main_menu_keyboard())
         elif text == "🔍 Check IMEI":
             user_states[user_id] = "awaiting_imei"
             await update.message.reply_text("🔢 Please enter your 15-digit IMEI number.")
@@ -119,7 +116,7 @@ def register_handlers():
         elif user_states.get(user_id) == "awaiting_imei":
             imei = text.strip()
             if not imei.isdigit() or len(imei) != 15:
-                await update.message.reply_text("❌ Invalid IMEI. It must be 15 digits.")
+                await update.message.reply_text("❌ Invalid IMEI. It must be 15 digits.", reply_markup=main_menu_keyboard())
                 return
 
             order_id = str(uuid.uuid4())
@@ -155,9 +152,7 @@ def register_handlers():
             )
             user_states[user_id] = None
         else:
-            keyboard = [[KeyboardButton("🔍 Check IMEI")], [KeyboardButton("❓ Help")]]
-            reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
-            await update.message.reply_text("❗ Please use the menu or /start to begin.", reply_markup=reply_markup)
+            await update.message.reply_text("❗ Please use the menu or /start to begin.", reply_markup=main_menu_keyboard())
 
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("help", help_cmd))
@@ -186,6 +181,7 @@ def telegram_webhook():
         logger.error(f"Error: {str(e)}")
         logger.error(traceback.format_exc())
         return "Error", 500
+
 
 @app.route("/payeer", methods=["POST"])
 def payeer_callback():
