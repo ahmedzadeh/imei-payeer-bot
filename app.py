@@ -206,7 +206,7 @@ def send_imei_result(user_id, imei):
             logger.info(f"API raw response: {res.text}")
 
             data = res.json()
-            info = data.get("data", data)  # Use nested data if available
+            info = data.get("data", data)
 
             msg = "✅ *Payment successful!*\n\n"
             msg += "📱 *IMEI Info:*\n"
@@ -225,9 +225,14 @@ def send_imei_result(user_id, imei):
             logger.error(f"Sending result error: {str(e)}")
 
     try:
-        asyncio.run_coroutine_threadsafe(send(), application.loop)
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            loop.create_task(send())
+        else:
+            asyncio.run(send())
     except Exception as e:
-        logger.error(f"Error scheduling coroutine: {str(e)}")
+        logger.error(f"Fallback loop scheduling failed: {str(e)}")
+
 
 async def set_webhook_async():
     try:
