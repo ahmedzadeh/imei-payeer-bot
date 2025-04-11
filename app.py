@@ -101,7 +101,6 @@ async def check_imei(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "paid": False
     }
 
-    # Escape to prevent HTML parse issues
     imei_html = html.escape(imei)
     price_html = html.escape(PRICE)
 
@@ -110,15 +109,16 @@ async def check_imei(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("💳 Pay via WebApp", web_app=WebAppInfo(url=webapp_url))]
     ])
 
-    message = f"""📱 <b>IMEI:</b> <code>{imei_html}</code>
-💳 <b>Price:</b> <code>{price_html} USD</code>
-
-Press the button below to pay:"""
+    message = (
+        f"📱 IMEI: {imei_html}\n"
+        f"💳 Price: {price_html} USD\n\n"
+        "Press the button below to pay:"
+    )
 
     await update.message.reply_text(
         message,
         reply_markup=keyboard,
-        parse_mode="HTML"
+        parse_mode=None  # No HTML, no risk
     )
 
 async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -152,17 +152,17 @@ async def send_results(user_id: int, imei: str):
         data = response.json()
 
         msg = "\n".join([
-            "✅ <b>IMEI Info:</b>",
-            f"▫️<b>IMEI:</b> {html.escape(data.get('IMEI', 'N/A'))}",
-            f"▫️<b>IMEI2:</b> {html.escape(data.get('IMEI2', 'N/A'))}",
-            f"▫️<b>Serial:</b> {html.escape(data.get('Serial Number', 'N/A'))}",
-            f"▫️<b>Purchase:</b> {html.escape(data.get('Date of purchase', 'N/A'))}",
-            f"▫️<b>Coverage:</b> {html.escape(data.get('Repairs & Service Coverage', 'N/A'))}",
-            f"▫️<b>Replaced:</b> {html.escape(data.get('is replaced', 'N/A'))}",
-            f"▫️<b>SIM Lock:</b> {html.escape(data.get('SIM Lock', 'N/A'))}"
+            "✅ IMEI Info:",
+            f"▫️IMEI: {data.get('IMEI', 'N/A')}",
+            f"▫️IMEI2: {data.get('IMEI2', 'N/A')}",
+            f"▫️Serial: {data.get('Serial Number', 'N/A')}",
+            f"▫️Purchase: {data.get('Date of purchase', 'N/A')}",
+            f"▫️Coverage: {data.get('Repairs & Service Coverage', 'N/A')}",
+            f"▫️Replaced: {data.get('is replaced', 'N/A')}",
+            f"▫️SIM Lock: {data.get('SIM Lock', 'N/A')}"
         ])
 
-        await bot.send_message(chat_id=user_id, text=msg, parse_mode="HTML")
+        await bot.send_message(chat_id=user_id, text=msg, parse_mode=None)
 
     except Exception as e:
         await bot.send_message(chat_id=user_id, text=f"❌ Error: {e}")
