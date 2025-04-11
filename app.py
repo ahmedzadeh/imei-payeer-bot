@@ -102,6 +102,32 @@ async def check_imei(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ])
 
     await update.message.reply_text(
+        f"📱 <b>IMEI:</b> <code>{imei}</code>
+💳 <b>Price:</b> <code>${PRICE} USD</code>
+
+Press the button below to pay:",
+        reply_markup=keyboard,
+        parse_mode="HTML"
+    )
+
+"Please enter a 15-digit IMEI.")
+        return
+
+    imei = context.args[0]
+    if not imei.isdigit() or len(imei) != 15:
+        await update.message.reply_text("Invalid IMEI format.")
+        return
+
+    user_id = update.effective_user.id
+    order_id = str(uuid.uuid4())
+    pending_orders[order_id] = {"user_id": user_id, "imei": imei, "paid": False}
+
+    webapp_url = f"{WEB_URL}/pay.html?order_id={order_id}&imei={imei}"
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("💳 Pay via WebApp", web_app=WebAppInfo(url=webapp_url))]
+    ])
+
+    await update.message.reply_text(
         f"📱 IMEI: `{imei}`\n💳 Price: `${PRICE} USD`\n\nPress the button below to pay:",
         reply_markup=keyboard,
         parse_mode="Markdown"
