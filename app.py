@@ -1,11 +1,11 @@
 import requests
 import logging
 import asyncio
+import os
+import traceback
 from flask import Flask, request
 from telegram import Update, ReplyKeyboardMarkup, KeyboardButton
 from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, filters
-import os
-from urllib.parse import urlencode
 
 # Logging setup
 logging.basicConfig(
@@ -15,7 +15,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Config
+# Configuration
 TOKEN = os.getenv("TOKEN", "8018027330:AAE6Se5mieBz4YzRESLJRj-5p3M1KHAQ6Go")
 IMEI_API_KEY = os.getenv("IMEI_API_KEY", "PKZ-HK5K6HMRFAXE5VZLCNW6L")
 IMEI_API_URL = "https://proimei.info/en/prepaid/api"
@@ -23,10 +23,8 @@ BASE_URL = os.getenv("BASE_URL", "https://api.imeichecks.online")
 
 app = Flask(__name__)
 application = Application.builder().token(TOKEN).build()
-
 user_states = {}
 
-# Telegram Handlers
 def register_handlers():
     async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         keyboard = [[KeyboardButton("🔍 Check IMEI")]]
@@ -55,20 +53,23 @@ def register_handlers():
 
 register_handlers()
 
-# IMEI Check + Response
 def send_imei_result(user_id, imei):
     async def send():
         try:
-            logger.info("✅ Sending IMEI result...")
+            print("✅ Sending IMEI result...")
             params = {"api_key": IMEI_API_KEY, "checker": "simlock2", "number": imei}
+            logger.info(f"Querying IMEI API with params: {params}")
             res = requests.get(IMEI_API_URL, params=params, timeout=15)
             res.raise_for_status()
             logger.info(f"API raw response: {res.text}")
 
             data = res.json()
+            logger.info(f"Parsed JSON: {data}")
             info = data.get("data", data)
+            logger.info(f"Used IMEI info block: {info}")
 
-            msg = "✅ *IMEI Info:*\n"
+            msg = "✅ *IMEI check complete!*\n\n"
+            msg += "📱 *IMEI Info:*\n"
             msg += f"🔹 *IMEI:* {info.get('IMEI', 'N/A')}\n"
             msg += f"🔹 *IMEI2:* {info.get('IMEI2', 'N/A')}\n"
             msg += f"🔹 *MEID:* {info.get('MEID', 'N/A')}\n"
@@ -79,9 +80,10 @@ def send_imei_result(user_id, imei):
             msg += f"🔹 *Replaced:* {info.get('is replaced', 'N/A')}\n"
             msg += f"🔹 *SIM Lock:* {info.get('SIM Lock', 'N/A')}"
 
+            logger.info(f"Final IMEI message: {msg}")
             await application.bot.send_message(chat_id=user_id, text=msg, parse_mode="Markdown")
         except Exception as e:
-            logger.error(f"❌ Sending result failed: {e}")
+            logger.error(f"Sending result error: {str(e)}")
 
     try:
         loop = asyncio.get_event_loop()
@@ -90,14 +92,13 @@ def send_imei_result(user_id, imei):
         else:
             asyncio.run(send())
     except Exception as e:
-        logger.error(f"❌ Loop scheduling failed: {e}")
+        logger.error(f"Fallback loop scheduling failed: {str(e)}")
 
-# Webhook for Telegram
 @app.route(f"/{TOKEN}", methods=["POST"])
 def telegram_webhook():
     try:
         update_json = request.get_json(force=True)
-        logger.info(f"Telegram update: {update_json}")
+        logger.info(f"Received Telegram update: {update_json}")
         update = Update.de_json(update_json, application.bot)
 
         async def handle():
@@ -109,11 +110,10 @@ def telegram_webhook():
         loop.run_until_complete(handle())
         return "OK"
     except Exception as e:
-        logger.error(f"Webhook Error: {e}")
+        logger.error(f"Webhook Error: {str(e)}")
         logger.error(traceback.format_exc())
         return "Error", 500
 
-# Set webhook on startup
 async def set_webhook_async():
     try:
         url = f"{BASE_URL}/{TOKEN}"
@@ -125,7 +125,6 @@ async def set_webhook_async():
 def set_webhook():
     asyncio.run(set_webhook_async())
 
-# Run Flask
 if __name__ == "__main__":
     set_webhook()
     app.run(host="0.0.0.0", port=8080)
