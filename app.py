@@ -4,9 +4,9 @@ import asyncio
 import requests
 import logging
 import os
-import html
+import base64
 from flask import Flask, request, jsonify
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo, ReplyKeyboardMarkup
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, filters
 
 # ==== Secure Env Setup ====
@@ -101,25 +101,36 @@ async def check_imei(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "paid": False
     }
 
-    imei_html = html.escape(imei)
-    price_html = html.escape(PRICE)
+    # Build Payeer payment URL
+    description = f"IMEI Check for {imei}"
+    m_desc = base64.b64encode(description.encode()).decode()
+    sign_string = f"{PAYEER_MERCHANT_ID}:{order_id}:{PRICE}:USD:{m_desc}:{PAYEER_SECRET_KEY}"
+    m_sign = hashlib.sha256(sign_string.encode()).hexdigest().upper()
 
-    webapp_url = f"{WEB_URL}/pay.html?order_id={order_id}&imei={imei}"
+    payment_url = (
+        f"https://payeer.com/merchant/?"
+        f"m_shop={PAYEER_MERCHANT_ID}&"
+        f"m_orderid={order_id}&"
+        f"m_amount={PRICE}&"
+        f"m_curr=USD&"
+        f"m_desc={m_desc}&"
+        f"m_sign={m_sign}&"
+        f"m_status_url={BASE_URL}/payeer&"
+        f"m_success_url={WEB_URL}/success&"
+        f"m_fail_url={WEB_URL}/fail&lang=en"
+    )
+
     keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("💳 Pay via WebApp", web_app=WebAppInfo(url=webapp_url))]
+        [InlineKeyboardButton("💳 Pay via Payeer", url=payment_url)]
     ])
 
     message = (
-        f"📱 IMEI: {imei_html}\n"
-        f"💳 Price: {price_html} USD\n\n"
-        "Press the button below to pay:"
+        f"📱 IMEI: {imei}\n"
+        f"💳 Price: {PRICE} USD\n\n"
+        "Click the button below to pay:"
     )
 
-    await update.message.reply_text(
-        message,
-        reply_markup=keyboard,
-        parse_mode=None  # No HTML, no risk
-    )
+    await update.message.reply_text(message, reply_markup=keyboard)
 
 async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -162,7 +173,7 @@ async def send_results(user_id: int, imei: str):
             f"▫️SIM Lock: {data.get('SIM Lock', 'N/A')}"
         ])
 
-        await bot.send_message(chat_id=user_id, text=msg, parse_mode=None)
+        await bot.send_message(chat_id=user_id, text=msg)
 
     except Exception as e:
         await bot.send_message(chat_id=user_id, text=f"❌ Error: {e}")
