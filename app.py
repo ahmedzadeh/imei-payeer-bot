@@ -102,7 +102,11 @@ def register_handlers():
         user_id = update.effective_user.id
         text = update.message.text
 
-        if text == "🔍 Check IMEI" or text == "🔙 Back":
+        if text == "🔙 Back":
+            keyboard = [[KeyboardButton("🔍 Check IMEI")], [KeyboardButton("❓ Help")]]
+            reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+            await update.message.reply_text("🏠 Back to main menu. Please choose an option:", reply_markup=reply_markup)
+        elif text == "🔍 Check IMEI":
             user_states[user_id] = "awaiting_imei"
             await update.message.reply_text("🔢 Please enter your 15-digit IMEI number.")
         elif text == "❓ Help":
