@@ -197,27 +197,37 @@ def fail():
     return render_template("fail.html")
 
 def send_imei_result(user_id, imei):
+    async def send():
+        try:
+            print("✅ Sending IMEI result...")
+            params = {"api_key": IMEI_API_KEY, "checker": "simlock2", "number": imei}
+            res = requests.get(IMEI_API_URL, params=params, timeout=15)
+            res.raise_for_status()
+            logger.info(f"API raw response: {res.text}")
+
+            data = res.json()
+            info = data.get("data", data)  # Use nested data if available
+
+            msg = "✅ *Payment successful!*\n\n"
+            msg += "📱 *IMEI Info:*\n"
+            msg += f"🔹 *IMEI:* {info.get('IMEI', 'N/A')}\n"
+            msg += f"🔹 *IMEI2:* {info.get('IMEI2', 'N/A')}\n"
+            msg += f"🔹 *MEID:* {info.get('MEID', 'N/A')}\n"
+            msg += f"🔹 *Serial:* {info.get('Serial Number', 'N/A')}\n"
+            msg += f"🔹 *Desc:* {info.get('Description', 'N/A')}\n"
+            msg += f"🔹 *Purchase:* {info.get('Date of purchase', 'N/A')}\n"
+            msg += f"🔹 *Coverage:* {info.get('Repairs & Service Coverage', 'N/A')}\n"
+            msg += f"🔹 *Replaced:* {info.get('is replaced', 'N/A')}\n"
+            msg += f"🔹 *SIM Lock:* {info.get('SIM Lock', 'N/A')}"
+
+            await application.bot.send_message(chat_id=user_id, text=msg, parse_mode="Markdown")
+        except Exception as e:
+            logger.error(f"Sending result error: {str(e)}")
+
     try:
-        params = {"api_key": IMEI_API_KEY, "checker": "simlock2", "number": imei}
-        res = requests.get(IMEI_API_URL, params=params, timeout=15)
-        res.raise_for_status()
-        data = res.json()
-
-        msg = "✅ *Payment successful!*\n\n"
-        msg += "📱 *IMEI Info:*\n"
-        msg += f"🔹 *IMEI:* {data.get('IMEI', 'N/A')}\n"
-        msg += f"🔹 *IMEI2:* {data.get('IMEI2', 'N/A')}\n"
-        msg += f"🔹 *MEID:* {data.get('MEID', 'N/A')}\n"
-        msg += f"🔹 *Serial:* {data.get('Serial Number', 'N/A')}\n"
-        msg += f"🔹 *Desc:* {data.get('Description', 'N/A')}\n"
-        msg += f"🔹 *Purchase:* {data.get('Date of purchase', 'N/A')}\n"
-        msg += f"🔹 *Coverage:* {data.get('Repairs & Service Coverage', 'N/A')}\n"
-        msg += f"🔹 *Replaced:* {data.get('is replaced', 'N/A')}\n"
-        msg += f"🔹 *SIM Lock:* {data.get('SIM Lock', 'N/A')}"
-
-        asyncio.run(application.bot.send_message(chat_id=user_id, text=msg, parse_mode="Markdown"))
+        asyncio.run_coroutine_threadsafe(send(), application.loop)
     except Exception as e:
-        logger.error(f"Sending result error: {str(e)}")
+        logger.error(f"Error scheduling coroutine: {str(e)}")
 
 async def set_webhook_async():
     try:
