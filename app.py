@@ -22,20 +22,17 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Configuration
-required_env = ["TOKEN", "IMEI_API_KEY", "PAYEER_MERCHANT_ID", "PAYEER_SECRET_KEY", "BASE_URL"]
-for var in required_env:
-    if not os.getenv(var):
-        raise EnvironmentError(f"Missing required environment variable: {var}")
-
-TOKEN = os.getenv("TOKEN")
-IMEI_API_KEY = os.getenv("IMEI_API_KEY")
-PAYEER_MERCHANT_ID = os.getenv("PAYEER_MERCHANT_ID")
-PAYEER_SECRET_KEY = os.getenv("PAYEER_SECRET_KEY")
-BASE_URL = os.getenv("BASE_URL")
+TOKEN = os.getenv("TOKEN", "8018027330:AAE6Se5mieBz4YzRESLJRj-5p3M1KHAQ6Go")
+IMEI_API_KEY = os.getenv("IMEI_API_KEY", "8AH-WSM-ARE-3KL-VG8-ME7-MV6-W8K")
+PAYEER_MERCHANT_ID = os.getenv("PAYEER_MERCHANT_ID", "2210021863")
+PAYEER_SECRET_KEY = os.getenv("PAYEER_SECRET_KEY", "123")
+BASE_URL = os.getenv("BASE_URL", "https://api.imeichecks.online")
 
 IMEI_API_URL = "https://proimei.info/en/prepaid/api"
 PAYEER_PAYMENT_URL = "https://payeer.com/merchant/"
 PRICE = "0.32"
+
+ADMIN_IDS = {2103379072, 6927331058}
 
 app = Flask(__name__)
 
@@ -107,6 +104,31 @@ def register_handlers():
 
         await update.message.reply_text(help_text, parse_mode="Markdown", reply_markup=reply_markup)
 
+    async def stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if update.effective_user.id not in ADMIN_IDS:
+            await update.message.reply_text("🚫 You are not authorized to view stats.")
+            return
+
+        with sqlite3.connect("payments.db") as conn:
+            c = conn.cursor()
+            c.execute("SELECT COUNT(*) FROM payments WHERE paid = 1")
+            total_paid = c.fetchone()[0]
+
+            c.execute("SELECT COUNT(*) FROM payments")
+            total_requests = c.fetchone()[0]
+
+            c.execute("SELECT DISTINCT user_id FROM payments")
+            unique_users = len(c.fetchall())
+
+        msg = (
+            "📊 *Bot Usage Stats:*\n"
+            f"• Total IMEI checks: *{total_requests}*\n"
+            f"• Successful payments: *{total_paid}*\n"
+            f"• Unique users: *{unique_users}*"
+        )
+
+        await update.message.reply_text(msg, parse_mode="Markdown")
+
     async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = update.effective_user.id
         text = update.message.text
@@ -161,9 +183,11 @@ def register_handlers():
 
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("help", help_cmd))
+    application.add_handler(CommandHandler("stats", stats_cmd))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler))
 
 register_handlers()
+
 
 @app.route(f"/{TOKEN}", methods=["POST"])
 def telegram_webhook():
@@ -187,7 +211,57 @@ def telegram_webhook():
         logger.error(traceback.format_exc())
         return "Error", 500
 
-# IMEI Result Sender with Menu Return
+
+@app.route("/payeer", methods=["POST"])
+def payeer_callback():
+    try:
+        form = request.form.to_dict()
+        logger.info(f"Received Payeer callback: {form}")
+
+        order_id = form.get("m_orderid")
+        if form.get("m_status") != "success":
+            return "Payment not successful", 400
+
+        with sqlite3.connect("payments.db") as conn:
+            c = conn.cursor()
+            c.execute("SELECT user_id, imei, paid FROM payments WHERE order_id = ?", (order_id,))
+            row = c.fetchone()
+            if row:
+                user_id, imei, paid = row
+                if not paid:
+                    c.execute("UPDATE payments SET paid = 1 WHERE order_id = ?", (order_id,))
+                    conn.commit()
+                    threading.Thread(target=send_imei_result, args=(user_id, imei)).start()
+        return "OK"
+    except Exception as e:
+        logger.error(f"Callback Error: {str(e)}")
+        return "Error", 500
+
+@app.route("/success")
+def success():
+    order_id = request.args.get("m_orderid")
+    if not order_id:
+        return render_template("fail.html")
+
+    try:
+        with sqlite3.connect("payments.db") as conn:
+            c = conn.cursor()
+            c.execute("SELECT user_id, imei, paid FROM payments WHERE order_id = ?", (order_id,))
+            row = c.fetchone()
+            if row:
+                user_id, imei, paid = row
+                if not paid:
+                    c.execute("UPDATE payments SET paid = 1 WHERE order_id = ?", (order_id,))
+                    conn.commit()
+                    threading.Thread(target=send_imei_result, args=(user_id, imei)).start()
+        return render_template("success.html")
+    except:
+        return render_template("fail.html")
+
+@app.route("/fail")
+def fail():
+    return render_template("fail.html")
+
 def send_imei_result(user_id, imei):
     try:
         params = {"api_key": IMEI_API_KEY, "checker": "simlock2", "number": imei}
@@ -210,7 +284,7 @@ def send_imei_result(user_id, imei):
             msg += f"🔹 *Replaced:* {data.get('is replaced', 'N/A')}\n"
             msg += f"🔹 *SIM Lock:* {data.get('SIM Lock', 'N/A')}"
 
-        asyncio.run(application.bot.send_message(chat_id=user_id, text=msg, parse_mode="Markdown", reply_markup=main_menu_keyboard()))
+        asyncio.run(application.bot.send_message(chat_id=user_id, text=msg, parse_mode="Markdown"))
     except Exception as e:
         logger.error(f"Sending result error: {str(e)}")
 
