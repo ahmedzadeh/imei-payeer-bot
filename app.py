@@ -197,31 +197,35 @@ def fail():
     return render_template("fail.html")
 
 def send_imei_result(user_id, imei):
-    try:
-        params = {"api_key": IMEI_API_KEY, "checker": "simlock2", "number": imei}
-        res = requests.get(IMEI_API_URL, params=params, timeout=15)
-        res.raise_for_status()
+    async def send():
+        try:
+            params = {"api_key": IMEI_API_KEY, "checker": "simlock2", "number": imei}
+            res = requests.get(IMEI_API_URL, params=params, timeout=15)
+            res.raise_for_status()
+            logger.info(f"API response: {res.text}")
 
-        logger.info(f"API response: {res.text}")  # Log full response for debugging
+            data = res.json()
+            info = data.get("data", data)
 
-        data = res.json()
-        info = data.get("data", data)  # Try 'data' first, fall back to root if not nested
+            msg = "✅ *Payment successful!*\n\n"
+            msg += "📱 *IMEI Info:*\n"
+            msg += f"🔹 *IMEI:* {info.get('IMEI', 'N/A')}\n"
+            msg += f"🔹 *IMEI2:* {info.get('IMEI2', 'N/A')}\n"
+            msg += f"🔹 *MEID:* {info.get('MEID', 'N/A')}\n"
+            msg += f"🔹 *Serial:* {info.get('Serial Number', 'N/A')}\n"
+            msg += f"🔹 *Desc:* {info.get('Description', 'N/A')}\n"
+            msg += f"🔹 *Purchase:* {info.get('Date of purchase', 'N/A')}\n"
+            msg += f"🔹 *Coverage:* {info.get('Repairs & Service Coverage', 'N/A')}\n"
+            msg += f"🔹 *Replaced:* {info.get('is replaced', 'N/A')}\n"
+            msg += f"🔹 *SIM Lock:* {info.get('SIM Lock', 'N/A')}"
 
-        msg = "✅ *Payment successful!*\n\n"
-        msg += "📱 *IMEI Info:*\n"
-        msg += f"🔹 *IMEI:* {info.get('IMEI', 'N/A')}\n"
-        msg += f"🔹 *IMEI2:* {info.get('IMEI2', 'N/A')}\n"
-        msg += f"🔹 *MEID:* {info.get('MEID', 'N/A')}\n"
-        msg += f"🔹 *Serial:* {info.get('Serial Number', 'N/A')}\n"
-        msg += f"🔹 *Desc:* {info.get('Description', 'N/A')}\n"
-        msg += f"🔹 *Purchase:* {info.get('Date of purchase', 'N/A')}\n"
-        msg += f"🔹 *Coverage:* {info.get('Repairs & Service Coverage', 'N/A')}\n"
-        msg += f"🔹 *Replaced:* {info.get('is replaced', 'N/A')}\n"
-        msg += f"🔹 *SIM Lock:* {info.get('SIM Lock', 'N/A')}"
+            await application.bot.send_message(chat_id=user_id, text=msg, parse_mode="Markdown")
+        except Exception as e:
+            logger.error(f"Async send error: {str(e)}")
 
-        asyncio.run(application.bot.send_message(chat_id=user_id, text=msg, parse_mode="Markdown"))
-    except Exception as e:
-        logger.error(f"Sending result error: {str(e)}")
+    # Launch in event loop correctly
+    application.create_task(send())
+
 
 async def set_webhook_async():
     try:
