@@ -5,7 +5,7 @@ import requests
 import logging
 import os
 from flask import Flask, request, jsonify
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo, ReplyKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, filters
 
 # ==== Secure Env Setup ====
@@ -13,8 +13,8 @@ TOKEN = os.getenv("TOKEN")
 IMEI_API_KEY = os.getenv("IMEI_API_KEY")
 PAYEER_MERCHANT_ID = os.getenv("PAYEER_MERCHANT_ID")
 PAYEER_SECRET_KEY = os.getenv("PAYEER_SECRET_KEY")
-BASE_URL = os.getenv("BASE_URL")  # example: https://api.imeichecks.online
-WEB_URL = os.getenv("WEB_URL")    # example: https://imeichecks.online
+BASE_URL = os.getenv("BASE_URL")
+WEB_URL = os.getenv("WEB_URL")
 PRICE = "0.32"
 
 # ==== Flask + Telegram Init ====
@@ -25,6 +25,7 @@ application = Application.builder().token(TOKEN).build()
 bot = application.bot
 
 pending_orders = {}
+user_states = {}
 
 @app.route("/")
 def index():
@@ -74,7 +75,12 @@ def payment_status():
 
 # ==== Bot Handlers ====
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Send /check <IMEI> to begin.")
+    keyboard = [["🔍 Check IMEI"], ["❓ Help"]]
+    reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+    await update.message.reply_text(
+        "👋 Welcome! Press '🔍Check IMEI' to start:\n\n🔢 Please enter your 15-digit IMEI number.",
+        reply_markup=reply_markup
+    )
 
 async def check_imei(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
@@ -101,6 +107,26 @@ async def check_imei(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode="Markdown"
     )
 
+async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    text = update.message.text.strip()
+
+    if text == "🔍 Check IMEI":
+        user_states[user_id] = "awaiting_imei"
+        await update.message.reply_text("🔢 Please enter your 15-digit IMEI number.")
+    elif text == "❓ Help":
+        await update.message.reply_text("ℹ️ Use the 'Check IMEI' button and follow the instructions.")
+    elif user_states.get(user_id) == "awaiting_imei":
+        imei = text
+        if not imei.isdigit() or len(imei) != 15:
+            await update.message.reply_text("❌ Invalid IMEI. It must be 15 digits.")
+            return
+        context.args = [imei]
+        await check_imei(update, context)
+        user_states[user_id] = None
+    else:
+        await update.message.reply_text("❗ Please use the buttons or /start to begin.")
+
 async def send_results(user_id: int, imei: str):
     try:
         response = requests.get("https://proimei.info/en/prepaid/api", params={
@@ -118,7 +144,7 @@ async def send_results(user_id: int, imei: str):
             f"Purchase: {data.get('Date of purchase', 'N/A')}",
             f"Coverage: {data.get('Repairs & Service Coverage', 'N/A')}",
             f"Replaced: {data.get('is replaced', 'N/A')}",
-            f"SIM Lock: {data.get('SIM Lock', 'N/A')}"
+            f"SIM Lock: {data.get('SIM Lock', 'N/A')}",
         ])
         await bot.send_message(chat_id=user_id, text=msg, parse_mode="Markdown")
     except Exception as e:
@@ -127,7 +153,7 @@ async def send_results(user_id: int, imei: str):
 # ==== Launch ====
 application.add_handler(CommandHandler("start", start))
 application.add_handler(CommandHandler("check", check_imei))
-application.add_handler(MessageHandler(filters.ALL, lambda u, c: None))
+application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler))
 loop.run_until_complete(application.initialize())
 
 if __name__ == "__main__":
