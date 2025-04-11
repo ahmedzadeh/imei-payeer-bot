@@ -22,6 +22,11 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Configuration
+required_env = ["TOKEN", "IMEI_API_KEY", "PAYEER_MERCHANT_ID", "PAYEER_SECRET_KEY", "BASE_URL"]
+for var in required_env:
+    if not os.getenv(var):
+        raise EnvironmentError(f"Missing required environment variable: {var}")
+
 TOKEN = os.getenv("TOKEN")
 IMEI_API_KEY = os.getenv("IMEI_API_KEY")
 PAYEER_MERCHANT_ID = os.getenv("PAYEER_MERCHANT_ID")
@@ -150,7 +155,9 @@ def register_handlers():
             )
             user_states[user_id] = None
         else:
-            await update.message.reply_text("❗ Please use the menu or /start to begin.")
+            keyboard = [[KeyboardButton("🔍 Check IMEI")], [KeyboardButton("❓ Help")]]
+            reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+            await update.message.reply_text("❗ Please use the menu or /start to begin.", reply_markup=reply_markup)
 
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("help", help_cmd))
