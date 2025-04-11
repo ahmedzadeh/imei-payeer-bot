@@ -66,17 +66,47 @@ def register_handlers():
         await update.message.reply_text("👋 Welcome! Choose an option:", reply_markup=reply_markup)
 
     async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        await update.message.reply_text("ℹ️ Use the 'Check IMEI' button and follow instructions to proceed.")
+        keyboard = [[KeyboardButton("🔙 Back")]]
+        reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+
+        help_text = (
+            "🆘 *Help & Tutorial*\n\n"
+            "Welcome to the IMEI Checker Bot! Here's how to use the service correctly and safely:\n\n"
+            "📋 *How to Use:*\n"
+            "1. 🔢 Send your 15-digit IMEI number (example: 358792654321789)\n"
+            "2. 💳 You’ll receive a payment button — click it and complete payment ($0.32)\n"
+            "3. 📩 Once payment is confirmed, you will automatically receive your IMEI result\n\n"
+            "⚠️ *Important Notes:*\n"
+            "- ✅ Always double-check your IMEI before sending.\n"
+            "- 🚫 If you enter a wrong IMEI, we are not responsible for incorrect or missing results.\n"
+            "- 🔁 No refunds are provided for typos or invalid IMEI numbers.\n"
+            "- 🧾 Make sure your IMEI is 15 digits — no spaces or dashes.\n\n"
+            "📱 *Sample Result (Preview):*\n\n"
+            "✅ Payment successful!\n\n"
+            "📱 IMEI Info:\n"
+            "🔷 IMEI: 358792654321789\n"
+            "🔷 IMEI2: 358792654321796\n"
+            "🔷 MEID: 35879265432178\n"
+            "🔷 Serial: G7XP91LMN9K\n"
+            "🔷 Desc: iPhone 13 Pro Max SILVER 256GB\n"
+            "🔷 Purchase: 2022-11-22\n"
+            "🔷 Coverage: Active – AppleCare+\n"
+            "🔷 Replaced: No\n"
+            "🔷 SIM Lock: Unlocked\n\n"
+            "⚠️ This is a sample result for demonstration only. Your actual result will depend on the IMEI you submit."
+        )
+
+        await update.message.reply_text(help_text, parse_mode="Markdown", reply_markup=reply_markup)
 
     async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = update.effective_user.id
         text = update.message.text
 
-        if text == "🔍 Check IMEI":
+        if text == "🔍 Check IMEI" or text == "🔙 Back":
             user_states[user_id] = "awaiting_imei"
             await update.message.reply_text("🔢 Please enter your 15-digit IMEI number.")
         elif text == "❓ Help":
-            await update.message.reply_text("ℹ️ Use the 'Check IMEI' button and follow instructions to proceed.")
+            await help_cmd(update, context)
         elif user_states.get(user_id) == "awaiting_imei":
             imei = text.strip()
             if not imei.isdigit() or len(imei) != 15:
