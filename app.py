@@ -105,11 +105,10 @@ async def check_imei(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("💳 Pay via WebApp", web_app=WebAppInfo(url=webapp_url))]
     ])
 
-    message = (
-        f"📱 <b>IMEI:</b> <code>{imei}</code>\n"
-        f"💳 <b>Price:</b> <code>{PRICE} USD</code>\n\n"
-        "Press the button below to pay:"
-    )
+    message = f"""📱 <b>IMEI:</b> <code>{imei}</code>
+💳 <b>Price:</b> <code>{PRICE} USD</code>
+
+Press the button below to pay:"""
 
     await update.message.reply_text(
         message,
