@@ -22,11 +22,11 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Configuration
-TOKEN = os.getenv("TOKEN")
-IMEI_API_KEY = os.getenv("IMEI_API_KEY")
-PAYEER_MERCHANT_ID = os.getenv("PAYEER_MERCHANT_ID")
-PAYEER_SECRET_KEY = os.getenv("PAYEER_SECRET_KEY")
-BASE_URL = os.getenv("BASE_URL")
+TOKEN = os.getenv("TOKEN", "8018027330:AAE6Se5mieBz4YzRESLJRj-5p3M1KHAQ6Go")
+IMEI_API_KEY = os.getenv("IMEI_API_KEY", "8AH-WSM-ARE-3KL-VG8-ME7-MV6-W8K")
+PAYEER_MERCHANT_ID = os.getenv("PAYEER_MERCHANT_ID", "2210021863")
+PAYEER_SECRET_KEY = os.getenv("PAYEER_SECRET_KEY", "123")
+BASE_URL = os.getenv("BASE_URL", "https://api.imeichecks.online")
 
 IMEI_API_URL = "https://proimei.info/en/prepaid/api"
 PAYEER_PAYMENT_URL = "https://payeer.com/merchant/"
