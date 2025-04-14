@@ -1,5 +1,5 @@
+import psycopg2
 import requests
-import sqlite3
 from flask import Flask, request, render_template
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton
 from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, filters
@@ -36,23 +36,28 @@ ADMIN_IDS = {2103379072, 6927331058}
 
 app = Flask(__name__)
 
+DATABASE_URL = os.getenv("DATABASE_URL")  # Set this in Railway using PostgreSQL connection string
+
+def get_db_connection():
+    return psycopg2.connect(DATABASE_URL)
+
 # Database initialization
 def init_db():
-    with sqlite3.connect("payments.db") as conn:
-        c = conn.cursor()
-        c.execute('''
-        CREATE TABLE IF NOT EXISTS payments (
-            order_id TEXT PRIMARY KEY,
-            user_id INTEGER,
-            imei TEXT,
-            amount TEXT,
-            currency TEXT,
-            paid BOOLEAN DEFAULT 0,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-        ''')
-        conn.commit()
-        logger.info("Database initialized")
+    with get_db_connection() as conn:
+        with conn.cursor() as c:
+            c.execute('''
+                CREATE TABLE IF NOT EXISTS payments (
+                    order_id TEXT PRIMARY KEY,
+                    user_id BIGINT,
+                    imei TEXT,
+                    amount TEXT,
+                    currency TEXT,
+                    paid BOOLEAN DEFAULT FALSE,
+                    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
+            conn.commit()
+            logger.info("PostgreSQL Database initialized")
 
 init_db()
 
@@ -109,16 +114,16 @@ def register_handlers():
             await update.message.reply_text("🚫 You are not authorized to view stats.")
             return
 
-        with sqlite3.connect("payments.db") as conn:
-            c = conn.cursor()
-            c.execute("SELECT COUNT(*) FROM payments WHERE paid = 1")
-            total_paid = c.fetchone()[0]
+        with get_db_connection() as conn:
+    with conn.cursor() as c:
+        c.execute("SELECT COUNT(*) FROM payments WHERE paid = TRUE")
+        total_paid = c.fetchone()[0]
 
-            c.execute("SELECT COUNT(*) FROM payments")
-            total_requests = c.fetchone()[0]
+        c.execute("SELECT COUNT(*) FROM payments")
+        total_requests = c.fetchone()[0]
 
-            c.execute("SELECT DISTINCT user_id FROM payments")
-            unique_users = len(c.fetchall())
+        c.execute("SELECT COUNT(DISTINCT user_id) FROM payments")
+        unique_users = c.fetchone()[0]
 
         msg = (
             "📊 *Bot Usage Stats:*\n"
@@ -147,11 +152,14 @@ def register_handlers():
                 return
 
             order_id = str(uuid.uuid4())
-            with sqlite3.connect("payments.db") as conn:
-                c = conn.cursor()
-                c.execute("INSERT INTO payments (order_id, user_id, imei, amount, currency, paid) VALUES (?, ?, ?, ?, ?, ?)",
-                          (order_id, user_id, imei, PRICE, "USD", False))
-                conn.commit()
+            with get_db_connection() as conn:
+                with conn.cursor() as c:
+                    c.execute(
+                        "INSERT INTO payments (order_id, user_id, imei, amount, currency, paid) VALUES (%s, %s, %s, %s, %s, %s)",
+                        (order_id, user_id, imei, PRICE, "USD", False)
+                    )
+                    conn.commit()
+
 
             desc = f"IMEI Check for {imei}"
             m_desc = base64.b64encode(desc.encode()).decode()
@@ -222,20 +230,17 @@ def payeer_callback():
         if form.get("m_status") != "success":
             return "Payment not successful", 400
 
-        with sqlite3.connect("payments.db") as conn:
-            c = conn.cursor()
-            c.execute("SELECT user_id, imei, paid FROM payments WHERE order_id = ?", (order_id,))
-            row = c.fetchone()
-            if row:
-                user_id, imei, paid = row
-                if not paid:
-                    c.execute("UPDATE payments SET paid = 1 WHERE order_id = ?", (order_id,))
-                    conn.commit()
-                    threading.Thread(target=send_imei_result, args=(user_id, imei)).start()
+        with get_db_connection() as conn:
+            with conn.cursor() as c:
+                c.execute("SELECT user_id, imei, paid FROM payments WHERE order_id = %s", (order_id,))
+                row = c.fetchone()
+                if row:
+                    user_id, imei, paid = row
+                    if not paid:
+                        c.execute("UPDATE payments SET paid = 1 WHERE order_id = %s", (order_id,))
+                        conn.commit()
+                        threading.Thread(target=send_imei_result, args=(user_id, imei)).start()
         return "OK"
-    except Exception as e:
-        logger.error(f"Callback Error: {str(e)}")
-        return "Error", 500
 
 @app.route("/success")
 def success():
@@ -243,20 +248,21 @@ def success():
     if not order_id:
         return render_template("fail.html")
 
-    try:
-        with sqlite3.connect("payments.db") as conn:
-            c = conn.cursor()
-            c.execute("SELECT user_id, imei, paid FROM payments WHERE order_id = ?", (order_id,))
+try:
+    with get_db_connection() as conn:
+        with conn.cursor() as c:
+            c.execute("SELECT user_id, imei, paid FROM payments WHERE order_id = %s", (order_id,))
             row = c.fetchone()
             if row:
                 user_id, imei, paid = row
                 if not paid:
-                    c.execute("UPDATE payments SET paid = 1 WHERE order_id = ?", (order_id,))
+                    c.execute("UPDATE payments SET paid = TRUE WHERE order_id = %s", (order_id,))
                     conn.commit()
                     threading.Thread(target=send_imei_result, args=(user_id, imei)).start()
-        return render_template("success.html")
-    except:
-        return render_template("fail.html")
+    return render_template("success.html")
+except Exception as e:
+    logger.error(f"/success error: {e}")
+    return render_template("fail.html")
 
 @app.route("/fail")
 def fail():
