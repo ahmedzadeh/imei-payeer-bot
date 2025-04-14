@@ -114,7 +114,7 @@ def register_handlers():
             await update.message.reply_text("🚫 You are not authorized to view stats.")
             return
 
-        with get_db_connection() as conn:
+with get_db_connection() as conn:
     with conn.cursor() as c:
         c.execute("SELECT COUNT(*) FROM payments WHERE paid = TRUE")
         total_paid = c.fetchone()[0]
