@@ -40,7 +40,7 @@ app = Flask(__name__)
 def init_db():
     with sqlite3.connect("payments.db") as conn:
         c = conn.cursor()
-        c.execute("""
+        c.execute('''
         CREATE TABLE IF NOT EXISTS payments (
             order_id TEXT PRIMARY KEY,
             user_id INTEGER,
@@ -50,7 +50,7 @@ def init_db():
             paid BOOLEAN DEFAULT 0,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
-        """)
+        ''')
         conn.commit()
         logger.info("Database initialized")
 
@@ -189,7 +189,7 @@ def register_handlers():
 register_handlers()
 
 
-@app.route(f"/{TOKEN}", methods=["POST"])
+@app.route("/webhook", methods=["POST"])
 def telegram_webhook():
     try:
         update_json = request.get_json(force=True)
@@ -290,7 +290,7 @@ def send_imei_result(user_id, imei):
 
 async def set_webhook_async():
     try:
-        webhook_url = f"{BASE_URL}/{TOKEN}"
+        webhook_url = f"{BASE_URL}/webhook"
         await application.bot.set_webhook(url=webhook_url)
         logger.info(f"Webhook set to {webhook_url}")
     except Exception as e:
