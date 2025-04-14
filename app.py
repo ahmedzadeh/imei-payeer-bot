@@ -38,6 +38,10 @@ app = Flask(__name__)
 
 DATABASE_URL = os.getenv("DATABASE_URL")  # Set this in Railway using PostgreSQL connection string
 
+# Create and set the event loop
+loop = asyncio.new_event_loop()
+asyncio.set_event_loop(loop)
+
 def get_db_connection():
     return psycopg2.connect(DATABASE_URL)
 
@@ -65,6 +69,9 @@ init_db()
 application = Application.builder().token(TOKEN).build()
 user_states = {}
 
+# Initialize the application once
+loop.run_until_complete(application.initialize())
+
 # Main menu keyboard
 def main_menu_keyboard():
     return ReplyKeyboardMarkup(
@@ -85,7 +92,7 @@ def register_handlers():
             "Welcome to the IMEI Checker Bot! Here's how to use the service correctly and safely:\n\n"
             "📋 *How to Use:*\n"
             "1. 🔢 Send your 15-digit IMEI number (example: 358792654321789)\n"
-            "2. 💳 You’ll receive a payment button — click it and complete payment ($0.32)\n"
+            "2. 💳 You'll receive a payment button — click it and complete payment ($0.32)\n"
             "3. 📩 Once payment is confirmed, you will automatically receive your IMEI result\n\n"
             "⚠️ *Important Notes:*\n"
             "- ✅ Always double-check your IMEI before sending.\n"
@@ -207,15 +214,12 @@ def telegram_webhook():
         logger.info(f"Received Telegram update: {update_json}")
 
         update = Update.de_json(update_json, application.bot)
-
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-
-        async def handle():
-            await application.initialize()
-            await application.process_update(update)
-
-        loop.run_until_complete(handle())
+        
+        # Use the existing event loop
+        asyncio.run_coroutine_threadsafe(
+            application.process_update(update), 
+            loop
+        )
         return "OK"
     except Exception as e:
         logger.error(f"Error: {str(e)}")
@@ -229,29 +233,64 @@ def payeer_callback():
         form = request.form.to_dict()
         logger.info(f"Received Payeer callback: {form}")
 
+        # Improved error handling for missing fields
         order_id = form.get("m_orderid")
-        if form.get("m_status") != "success":
+        if not order_id:
+            logger.warning("❌ Missing order_id in Payeer callback")
+            return "Missing order ID", 400
+            
+        status = form.get("m_status")
+        if status != "success":
+            logger.warning(f"❌ Payment status not successful: {status}")
             return "Payment not successful", 400
-
+            
+        # Security: Verify the signature
+        received_sign = form.get("m_sign")
+        if not received_sign:
+            logger.warning("❌ Missing signature in Payeer callback")
+            return "Missing signature", 400
+            
+        # Get payment details from database to verify
         with get_db_connection() as conn:
             with conn.cursor() as c:
-                c.execute("SELECT user_id, imei, paid FROM payments WHERE order_id = %s", (order_id,))
+                c.execute("SELECT user_id, imei, amount, currency, paid FROM payments WHERE order_id = %s", (order_id,))
                 row = c.fetchone()
-                if row:
-                    user_id, imei, paid = row
-                    if not paid:
-                        c.execute("UPDATE payments SET paid = 1 WHERE order_id = %s", (order_id,))
-                        conn.commit()
-                        threading.Thread(target=send_imei_result, args=(user_id, imei)).start()
+                if not row:
+                    logger.warning(f"❌ Order ID not found: {order_id}")
+                    return "Order not found", 404
+                    
+                user_id, imei, amount, currency, paid = row
+                
+                # Verify the payment signature
+                m_desc = base64.b64encode(f"IMEI Check for {imei}".encode()).decode()
+                expected_sign = hashlib.sha256(
+                    f"{PAYEER_MERCHANT_ID}:{order_id}:{amount}:{currency}:{m_desc}:{PAYEER_SECRET_KEY}".encode()
+                ).hexdigest().upper()
+                
+                if received_sign != expected_sign:
+                    logger.warning("⚠️ Invalid Payeer signature!")
+                    return "Invalid signature", 403
+                
+                # Process the payment if not already paid
+                if not paid:
+                    c.execute("UPDATE payments SET paid = TRUE WHERE order_id = %s", (order_id,))
+                    conn.commit()
+                    threading.Thread(target=send_imei_result, args=(user_id, imei)).start()
+                    logger.info(f"✅ Payment processed for order: {order_id}")
+                else:
+                    logger.info(f"ℹ️ Payment already processed for order: {order_id}")
+                    
         return "OK"
     except Exception as e:
         logger.error(f"Payeer callback error: {str(e)}")
+        logger.error(traceback.format_exc())
         return "Error processing payment", 500
         
 @app.route("/success")
 def success():
     order_id = request.args.get("m_orderid")
     if not order_id:
+        logger.warning("❌ Missing order_id in success callback")
         return render_template("fail.html")
 
     try:
@@ -259,20 +298,32 @@ def success():
             with conn.cursor() as c:
                 c.execute("SELECT user_id, imei, paid FROM payments WHERE order_id = %s", (order_id,))
                 row = c.fetchone()
-                if row:
-                    user_id, imei, paid = row
-                    if not paid:
-                        c.execute("UPDATE payments SET paid = TRUE WHERE order_id = %s", (order_id,))
-                        conn.commit()
-                        threading.Thread(target=send_imei_result, args=(user_id, imei)).start()
+                if not row:
+                    logger.warning(f"❌ Order ID not found in success page: {order_id}")
+                    return render_template("fail.html")
+                    
+                user_id, imei, paid = row
+                if not paid:
+                    c.execute("UPDATE payments SET paid = TRUE WHERE order_id = %s", (order_id,))
+                    conn.commit()
+                    threading.Thread(target=send_imei_result, args=(user_id, imei)).start()
+                    logger.info(f"✅ Payment marked as successful via success page: {order_id}")
+                else:
+                    logger.info(f"ℹ️ Payment already processed (success page): {order_id}")
+                    
         return render_template("success.html")
-
     except Exception as e:
-        logger.error(f"/success error: {e}")
+        logger.error(f"/success error: {str(e)}")
+        logger.error(traceback.format_exc())
         return render_template("fail.html")
 
 @app.route("/fail")
 def fail():
+    order_id = request.args.get("m_orderid")
+    if order_id:
+        logger.info(f"❌ Payment failed for order: {order_id}")
+    else:
+        logger.info("❌ Payment failed (no order ID)")
     return render_template("fail.html")
 
 def send_imei_result(user_id, imei):
@@ -284,6 +335,7 @@ def send_imei_result(user_id, imei):
 
         if 'error' in data or not any(value for key, value in data.items() if key != 'error'):
             msg = "⚠️ IMEI not found in the database. Please ensure it is correct."
+            logger.warning(f"⚠️ IMEI not found in database: {imei}")
         else:
             msg = "✅ *Payment successful!*\n\n"
             msg += "📱 *IMEI Info:*\n"
@@ -296,10 +348,30 @@ def send_imei_result(user_id, imei):
             msg += f"🔹 *Coverage:* {data.get('Repairs & Service Coverage', 'N/A')}\n"
             msg += f"🔹 *Replaced:* {data.get('is replaced', 'N/A')}\n"
             msg += f"🔹 *SIM Lock:* {data.get('SIM Lock', 'N/A')}"
+            logger.info(f"✅ IMEI result sent for: {imei}")
 
-        asyncio.run(application.bot.send_message(chat_id=user_id, text=msg, parse_mode="Markdown"))
+        # Use the global event loop instead of creating a new one
+        future = asyncio.run_coroutine_threadsafe(
+            application.bot.send_message(chat_id=user_id, text=msg, parse_mode="Markdown"),
+            loop
+        )
+        # Wait for the result if needed
+        future.result(timeout=30)
+    except requests.RequestException as e:
+        logger.error(f"API request error for IMEI {imei}: {str(e)}")
+        # Try to notify the user about the error
+        error_msg = "❌ There was an error checking your IMEI. Please try again later or contact support."
+        try:
+            future = asyncio.run_coroutine_threadsafe(
+                application.bot.send_message(chat_id=user_id, text=error_msg),
+                loop
+            )
+            future.result(timeout=10)
+        except Exception:
+            pass  # If we can't send the error message, just log and continue
     except Exception as e:
-        logger.error(f"Sending result error: {str(e)}")
+        logger.error(f"Sending result error for IMEI {imei}: {str(e)}")
+        logger.error(traceback.format_exc())
 
 async def set_webhook_async():
     try:
@@ -311,7 +383,8 @@ async def set_webhook_async():
         logger.error(traceback.format_exc())
 
 def set_webhook():
-    asyncio.run(set_webhook_async())
+    # Use the existing event loop
+    loop.run_until_complete(set_webhook_async())
 
 if __name__ == "__main__":
     set_webhook()
