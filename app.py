@@ -244,7 +244,10 @@ def payeer_callback():
                         conn.commit()
                         threading.Thread(target=send_imei_result, args=(user_id, imei)).start()
         return "OK"
-
+    except Exception as e:
+        logger.error(f"Payeer callback error: {str(e)}")
+        return "Error processing payment", 500
+        
 @app.route("/success")
 def success():
     order_id = request.args.get("m_orderid")
