@@ -114,25 +114,29 @@ def register_handlers():
             await update.message.reply_text("🚫 You are not authorized to view stats.")
             return
 
-with get_db_connection() as conn:
-    with conn.cursor() as c:
-        c.execute("SELECT COUNT(*) FROM payments WHERE paid = TRUE")
-        total_paid = c.fetchone()[0]
+        try:
+            with get_db_connection() as conn:
+                with conn.cursor() as c:
+                    c.execute("SELECT COUNT(*) FROM payments WHERE paid = TRUE")
+                    total_paid = c.fetchone()[0]
 
-        c.execute("SELECT COUNT(*) FROM payments")
-        total_requests = c.fetchone()[0]
+                    c.execute("SELECT COUNT(*) FROM payments")
+                    total_requests = c.fetchone()[0]
 
-        c.execute("SELECT COUNT(DISTINCT user_id) FROM payments")
-        unique_users = c.fetchone()[0]
+                    c.execute("SELECT COUNT(DISTINCT user_id) FROM payments")
+                    unique_users = c.fetchone()[0]
 
-        msg = (
-            "📊 *Bot Usage Stats:*\n"
-            f"• Total IMEI checks: *{total_requests}*\n"
-            f"• Successful payments: *{total_paid}*\n"
-            f"• Unique users: *{unique_users}*"
-        )
+            msg = (
+                "📊 *Bot Usage Stats:*\n"
+                f"• Total IMEI checks: *{total_requests}*\n"
+                f"• Successful payments: *{total_paid}*\n"
+                f"• Unique users: *{unique_users}*"
+            )
 
-        await update.message.reply_text(msg, parse_mode="Markdown")
+            await update.message.reply_text(msg, parse_mode="Markdown")
+        except Exception as e:
+            logger.error(f"/stats error: {e}")
+            await update.message.reply_text("❌ Failed to load stats.")
 
     async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = update.effective_user.id
@@ -160,7 +164,6 @@ with get_db_connection() as conn:
                     )
                     conn.commit()
 
-
             desc = f"IMEI Check for {imei}"
             m_desc = base64.b64encode(desc.encode()).decode()
             sign_string = f"{PAYEER_MERCHANT_ID}:{order_id}:{PRICE}:USD:{m_desc}:{PAYEER_SECRET_KEY}"
@@ -180,7 +183,6 @@ with get_db_connection() as conn:
 
             payment_url = f"{PAYEER_PAYMENT_URL}?{urlencode(payment_data)}"
             keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("💳 Pay $0.32 USD", url=payment_url)]])
-
             await update.message.reply_text(
                 f"📱 IMEI: {imei}\nTo receive your result, please complete payment:",
                 reply_markup=keyboard
@@ -189,6 +191,7 @@ with get_db_connection() as conn:
         else:
             await update.message.reply_text("❗ Please use the menu or /start to begin.", reply_markup=main_menu_keyboard())
 
+    # Register handlers
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("help", help_cmd))
     application.add_handler(CommandHandler("stats", stats_cmd))
