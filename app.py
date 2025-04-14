@@ -248,21 +248,22 @@ def success():
     if not order_id:
         return render_template("fail.html")
 
-try:
-    with get_db_connection() as conn:
-        with conn.cursor() as c:
-            c.execute("SELECT user_id, imei, paid FROM payments WHERE order_id = %s", (order_id,))
-            row = c.fetchone()
-            if row:
-                user_id, imei, paid = row
-                if not paid:
-                    c.execute("UPDATE payments SET paid = TRUE WHERE order_id = %s", (order_id,))
-                    conn.commit()
-                    threading.Thread(target=send_imei_result, args=(user_id, imei)).start()
-    return render_template("success.html")
-except Exception as e:
-    logger.error(f"/success error: {e}")
-    return render_template("fail.html")
+    try:
+        with get_db_connection() as conn:
+            with conn.cursor() as c:
+                c.execute("SELECT user_id, imei, paid FROM payments WHERE order_id = %s", (order_id,))
+                row = c.fetchone()
+                if row:
+                    user_id, imei, paid = row
+                    if not paid:
+                        c.execute("UPDATE payments SET paid = TRUE WHERE order_id = %s", (order_id,))
+                        conn.commit()
+                        threading.Thread(target=send_imei_result, args=(user_id, imei)).start()
+        return render_template("success.html")
+
+    except Exception as e:
+        logger.error(f"/success error: {e}")
+        return render_template("fail.html")
 
 @app.route("/fail")
 def fail():
