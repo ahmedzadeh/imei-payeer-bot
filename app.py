@@ -81,7 +81,9 @@ def main_menu_keyboard():
 # Handlers
 def register_handlers():
     async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        logger.info(f"Start command received from user {update.effective_user.id}")
         await update.message.reply_text("👋 Welcome! Choose an option:", reply_markup=main_menu_keyboard())
+        logger.info(f"Response sent to user {update.effective_user.id}")
 
     async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         keyboard = [[KeyboardButton("🔙 Back")]]
@@ -148,6 +150,7 @@ def register_handlers():
     async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = update.effective_user.id
         text = update.message.text
+        logger.info(f"Text message received: '{text}' from user {user_id}")
 
         if text == "🔙 Back":
             await update.message.reply_text("🏠 Back to main menu. Please choose an option:", reply_markup=main_menu_keyboard())
