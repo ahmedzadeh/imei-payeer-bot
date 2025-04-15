@@ -38,6 +38,10 @@ app = Flask(__name__)
 
 DATABASE_URL = os.getenv("DATABASE_URL")  # Set this in Railway using PostgreSQL connection string
 
+logger.info(f"TOKEN: {TOKEN}")
+logger.info(f"IMEI_API_KEY: {IMEI_API_KEY}")
+logger.info(f"BASE_URL: {BASE_URL}")
+
 # Create and set the event loop
 loop = asyncio.new_event_loop()
 asyncio.set_event_loop(loop)
@@ -69,6 +73,8 @@ init_db()
 application = Application.builder().token(TOKEN).build()
 loop = asyncio.new_event_loop()
 asyncio.set_event_loop(loop)
+
+user_states = {}
 
 # Main menu keyboard
 def main_menu_keyboard():
