@@ -70,8 +70,7 @@ application = Application.builder().token(TOKEN).build()
 loop = asyncio.new_event_loop()
 asyncio.set_event_loop(loop)
 
-loop.run_until_complete(application.initialize())
-loop.run_until_complete(application.post_init())  # ✅ required for webhooks
+loop.run_until_complete(application.initialize())  # ✅ Only this
 
 # Main menu keyboard
 def main_menu_keyboard():
