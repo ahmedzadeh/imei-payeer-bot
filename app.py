@@ -216,19 +216,27 @@ def telegram_webhook():
         update_json = request.get_json(force=True)
         logger.info(f"Received Telegram update: {update_json}")
 
-        update = Update.de_json(update_json, application.bot)
+        # Extract chat_id directly from the update
+        chat_id = update_json.get('message', {}).get('chat', {}).get('id')
+        if not chat_id:
+            logger.warning("No chat_id found in update")
+            return "No chat_id", 400
+
+        # Send a direct message
+        text = "I received your message! This is a direct response bypassing the normal handlers."
         
-        # Use the existing event loop
+        logger.info(f"Attempting to send direct message to chat_id: {chat_id}")
         future = asyncio.run_coroutine_threadsafe(
-            application.process_update(update), 
+            application.bot.send_message(chat_id=chat_id, text=text),
             loop
         )
-        # Wait for the result to ensure the message is processed
-        future.result(timeout=10)
-        logger.info("Update processed successfully")
+        # Use a shorter timeout
+        result = future.result(timeout=5)
+        logger.info(f"Direct message sent successfully: {result}")
+        
         return "OK"
     except asyncio.TimeoutError:
-        logger.error("⚠️ Timeout while processing update")
+        logger.error("⚠️ Timeout while sending direct message")
         return "Timeout", 500
     except Exception as e:
         logger.error(f"Error: {str(e)}")
@@ -335,24 +343,27 @@ def fail():
         logger.info("❌ Payment failed (no order ID)")
     return render_template("fail.html")
 
-@app.route("/test_bot")
-def test_bot():
+@app.route("/test_token")
+def test_token():
     try:
-        chat_id = request.args.get("chat_id", "6927331058")  # Your chat ID as default
-        message = request.args.get("message", "This is a test message from the bot")
-        
-        logger.info(f"Attempting to send test message to chat_id: {chat_id}")
         future = asyncio.run_coroutine_threadsafe(
-            application.bot.send_message(chat_id=chat_id, text=message),
+            application.bot.get_me(),
             loop
         )
-        result = future.result(timeout=10)
-        logger.info(f"Test message sent successfully: {result}")
-        return f"Message sent: {result}"
+        result = future.result(timeout=5)
+        return f"Bot info: {result}"
     except Exception as e:
-        logger.error(f"Test bot error: {str(e)}")
+        logger.error(f"Test token error: {str(e)}")
         logger.error(traceback.format_exc())
         return f"Error: {str(e)}"
+
+@app.route("/test_network")
+def test_network():
+    try:
+        response = requests.get("https://api.telegram.org", timeout=5)
+        return f"Network test: {response.status_code}"
+    except Exception as e:
+        return f"Network error: {str(e)}"
 
 def send_imei_result(user_id, imei):
     try:
