@@ -205,7 +205,7 @@ def register_handlers():
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("help", help_cmd))
     application.add_handler(CommandHandler("stats", stats_cmd))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler))
+    application.add_handler(MessageHandler(filters.TEXT, text_handler))
 
 register_handlers()
 
