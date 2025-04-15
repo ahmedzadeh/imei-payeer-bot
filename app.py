@@ -70,8 +70,6 @@ application = Application.builder().token(TOKEN).build()
 loop = asyncio.new_event_loop()
 asyncio.set_event_loop(loop)
 
-loop.run_until_complete(application.initialize())  # ✅ Only this
-
 # Main menu keyboard
 def main_menu_keyboard():
     return ReplyKeyboardMarkup(
@@ -422,5 +420,9 @@ def set_webhook():
     loop.run_until_complete(set_webhook_async())
 
 if __name__ == "__main__":
-    set_webhook()
+    # ✅ Initialize bot, set webhook, THEN run server
+    loop.run_until_complete(application.initialize())
+    loop.run_until_complete(set_webhook_async())  # sets webhook to your BASE_URL/webhook
+
+    # ✅ This must come LAST
     app.run(host="0.0.0.0", port=8080)
