@@ -150,16 +150,25 @@ def register_handlers():
     async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = update.effective_user.id
         text = update.message.text
+
+        logger.info(f"[text_handler] Received message: {text} from user {user_id}")
+        logger.info(f"[text_handler] Current user_states: {user_states}")
         logger.info(f"Text message received: '{text}' from user {user_id}")
+        
+        
 
         if text == "🔙 Back":
+            logger.info(f"[text_handler] User {user_id} selected Back.")
             await update.message.reply_text("🏠 Back to main menu. Please choose an option:", reply_markup=main_menu_keyboard())
         elif text == "🔍 Check IMEI":
+            logger.info(f"[text_handler] User {user_id} selected Check IMEI.")
             user_states[user_id] = "awaiting_imei"
             await update.message.reply_text("🔢 Please enter your 15-digit IMEI number.")
         elif text == "❓ Help":
+            logger.info(f"[text_handler] User {user_id} selected Help.")
             await help_cmd(update, context)
         elif user_states.get(user_id) == "awaiting_imei":
+            logger.info(f"[text_handler] User {user_id} is sending IMEI in awaiting_imei mode.")
             imei = text.strip()
             if not imei.isdigit() or len(imei) != 15:
                 await update.message.reply_text("❌ Invalid IMEI. It must be 15 digits.", reply_markup=main_menu_keyboard())
@@ -199,6 +208,7 @@ def register_handlers():
             )
             user_states[user_id] = None
         else:
+            logger.info(f"[text_handler] User {user_id} sent unrecognized input outside state.")
             await update.message.reply_text("❗ Please use the menu or /start to begin.", reply_markup=main_menu_keyboard())
 
     # Register handlers
