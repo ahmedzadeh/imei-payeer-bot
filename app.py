@@ -332,6 +332,25 @@ def fail():
         logger.info("❌ Payment failed (no order ID)")
     return render_template("fail.html")
 
+@app.route("/test_bot")
+def test_bot():
+    try:
+        chat_id = request.args.get("chat_id", "6927331058")  # Your chat ID as default
+        message = request.args.get("message", "This is a test message from the bot")
+        
+        logger.info(f"Attempting to send test message to chat_id: {chat_id}")
+        future = asyncio.run_coroutine_threadsafe(
+            application.bot.send_message(chat_id=chat_id, text=message),
+            loop
+        )
+        result = future.result(timeout=10)
+        logger.info(f"Test message sent successfully: {result}")
+        return f"Message sent: {result}"
+    except Exception as e:
+        logger.error(f"Test bot error: {str(e)}")
+        logger.error(traceback.format_exc())
+        return f"Error: {str(e)}"
+
 def send_imei_result(user_id, imei):
     try:
         params = {"api_key": IMEI_API_KEY, "checker": "simlock2", "number": imei}
