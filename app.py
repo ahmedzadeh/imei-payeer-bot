@@ -83,15 +83,15 @@ def main_menu_keyboard():
 # Handlers
 def register_handlers():
     async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    logger.info(f"Start command received from user {update.effective_user.id}")
-    logger.info("✅ Entered /start handler")
+        logger.info(f"Start command received from user {update.effective_user.id}")
+        logger.info("✅ Entered /start handler")
 
-    try:
-        await update.message.reply_text("👋 Welcome! Choose an option:", reply_markup=main_menu_keyboard())
-        logger.info(f"✅ Response sent to user {update.effective_user.id}")
-    except Exception as e:
-        logger.error(f"❌ Failed to send /start reply: {e}")
-        logger.error(traceback.format_exc())
+        try:
+            await update.message.reply_text("👋 Welcome! Choose an option:", reply_markup=main_menu_keyboard())
+            logger.info(f"✅ Response sent to user {update.effective_user.id}")
+        except Exception as e:
+            logger.error(f"❌ Failed to send /start reply: {e}")
+            logger.error(traceback.format_exc())
 
     async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         keyboard = [[KeyboardButton("🔙 Back")]]
