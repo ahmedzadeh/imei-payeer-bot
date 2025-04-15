@@ -216,33 +216,19 @@ def telegram_webhook():
         update_json = request.get_json(force=True)
         logger.info(f"Received Telegram update: {update_json}")
 
-        # Extract chat_id directly from the update
-        chat_id = update_json.get('message', {}).get('chat', {}).get('id')
-        if not chat_id:
-            logger.warning("No chat_id found in update")
-            return "No chat_id", 400
+        update = Update.de_json(update_json, application.bot)
 
-        # Send a direct message
-        text = "I received your message! This is a direct response bypassing the normal handlers."
-        
-        logger.info(f"Attempting to send direct message to chat_id: {chat_id}")
-        future = asyncio.run_coroutine_threadsafe(
-            application.bot.send_message(chat_id=chat_id, text=text),
+        # Just hand off the update to the application
+        asyncio.run_coroutine_threadsafe(
+            application.process_update(update),
             loop
         )
-        # Use a shorter timeout
-        result = future.result(timeout=5)
-        logger.info(f"Direct message sent successfully: {result}")
-        
+
         return "OK"
-    except asyncio.TimeoutError:
-        logger.error("⚠️ Timeout while sending direct message")
-        return "Timeout", 500
     except Exception as e:
-        logger.error(f"Error: {str(e)}")
+        logger.error(f"Webhook Error: {str(e)}")
         logger.error(traceback.format_exc())
         return "Error", 500
-
 
 @app.route("/payeer", methods=["POST"])
 def payeer_callback():
