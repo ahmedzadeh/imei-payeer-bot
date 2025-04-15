@@ -67,10 +67,11 @@ init_db()
 
 # Bot setup
 application = Application.builder().token(TOKEN).build()
-user_states = {}
+loop = asyncio.new_event_loop()
+asyncio.set_event_loop(loop)
 
-# Initialize the application once
 loop.run_until_complete(application.initialize())
+loop.run_until_complete(application.post_init())  # ✅ required for webhooks
 
 # Main menu keyboard
 def main_menu_keyboard():
