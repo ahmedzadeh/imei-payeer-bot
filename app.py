@@ -71,8 +71,6 @@ init_db()
 
 # Bot setup
 application = Application.builder().token(TOKEN).build()
-loop = asyncio.new_event_loop()
-asyncio.set_event_loop(loop)
 
 user_states = {}
 
