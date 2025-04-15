@@ -216,11 +216,17 @@ def telegram_webhook():
         update = Update.de_json(update_json, application.bot)
         
         # Use the existing event loop
-        asyncio.run_coroutine_threadsafe(
+        future = asyncio.run_coroutine_threadsafe(
             application.process_update(update), 
             loop
         )
+        # Wait for the result to ensure the message is processed
+        future.result(timeout=10)
+        logger.info("Update processed successfully")
         return "OK"
+    except asyncio.TimeoutError:
+        logger.error("⚠️ Timeout while processing update")
+        return "Timeout", 500
     except Exception as e:
         logger.error(f"Error: {str(e)}")
         logger.error(traceback.format_exc())
