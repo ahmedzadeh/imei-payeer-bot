@@ -71,7 +71,6 @@ user_states = {}
 
 # Initialize the application once
 loop.run_until_complete(application.initialize())
-loop.run_until_complete(application.start())
 
 # Main menu keyboard
 def main_menu_keyboard():
@@ -413,6 +412,5 @@ def set_webhook():
     loop.run_until_complete(set_webhook_async())
 
 if __name__ == "__main__":
-    loop.run_until_complete(application.start())  # 🔥 Important!
     set_webhook()
     app.run(host="0.0.0.0", port=8080)
