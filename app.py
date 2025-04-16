@@ -212,6 +212,20 @@ def is_rate_limited(user_id, limit_seconds=5):
     user_request_times[user_id] = current_time
     return False
 
+# Check if user has language preference set
+def has_language_preference(user_id):
+    conn = get_db_connection()
+    try:
+        with conn.cursor() as c:
+            c.execute("SELECT language FROM user_settings WHERE user_id = %s", (user_id,))
+            result = c.fetchone()
+            return result is not None
+    except Exception as e:
+        logger.error(f"Error checking language preference: {e}")
+        return False
+    finally:
+        release_db_connection(conn)
+
 # Get user language preference
 def get_user_language(user_id):
     conn = get_db_connection()
@@ -400,20 +414,11 @@ def register_handlers():
     async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = update.effective_user.id
         
-        # Check if user has a language preference
-        lang = get_user_language(user_id)
-        if lang not in ['en', 'ru']:
-            # If no language preference, show language selection
-            await update.message.reply_text(
-                "Please select your language / Пожалуйста, выберите ваш язык:",
-                reply_markup=language_keyboard()
-            )
-        else:
-            # If language preference exists, show main menu
-            await update.message.reply_text(
-                get_text(user_id, 'welcome'),
-                reply_markup=main_menu_keyboard(user_id)
-            )
+        # Always show language selection first for every /start command
+        await update.message.reply_text(
+            "Please select your language / Пожалуйста, выберите ваш язык:",
+            reply_markup=language_keyboard()
+        )
 
     async def language_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Show language selection keyboard
@@ -542,6 +547,15 @@ def register_handlers():
         # Rate limiting check
         if is_rate_limited(user_id):
             await update.message.reply_text(get_text(user_id, 'wait_message'))
+            return
+
+        # Check if user has language preference
+        if not has_language_preference(user_id):
+            # If no language preference, show language selection
+            await update.message.reply_text(
+                "Please select your language / Пожалуйста, выберите ваш язык:",
+                reply_markup=language_keyboard()
+            )
             return
 
         # Get user's language
