@@ -17,7 +17,7 @@ import time
 from psycopg2 import pool
 import json
 from datetime import datetime, timedelta
-import dotenv
+from dotenv import load_dotenv
 
 # Load environment variables
 load_dotenv()
