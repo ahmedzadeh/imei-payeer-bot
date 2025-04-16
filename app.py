@@ -1,9 +1,8 @@
 import psycopg2
-import psycopg2.extras
 import requests
 from flask import Flask, request, render_template
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton
-from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, filters, CallbackQueryHandler
+from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, filters
 import hashlib
 import uuid
 import os
@@ -16,56 +15,36 @@ import traceback
 import time
 from psycopg2 import pool
 import json
-from datetime import datetime, timedelta
-from dotenv import load_dotenv
-
-# Load environment variables
-load_dotenv()
+from datetime import datetime
 
 # Logging setup
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
-    handlers=[
-        logging.StreamHandler(),
-        logging.handlers.RotatingFileHandler(
-            "bot.log", maxBytes=10485760, backupCount=5  # 10MB per file, keep 5 files
-        )
-    ]
+    format="%(asctime)s - %(levelname)s - %(message)s",
+    handlers=[logging.StreamHandler(), logging.FileHandler("bot.log")]
 )
 logger = logging.getLogger(__name__)
 
-# Configuration from environment variables
+# Configuration
 TOKEN = os.getenv("TOKEN")
 IMEI_API_KEY = os.getenv("IMEI_API_KEY")
 PAYEER_MERCHANT_ID = os.getenv("PAYEER_MERCHANT_ID")
 PAYEER_SECRET_KEY = os.getenv("PAYEER_SECRET_KEY")
 BASE_URL = os.getenv("BASE_URL")
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://postgres:zTFbouZOdiuXYvmBvpTvLLkyJYOORSrN@maglev.proxy.rlwy.net:17420/railway")
 
 IMEI_API_URL = "https://proimei.info/en/prepaid/api"
 PAYEER_PAYMENT_URL = "https://payeer.com/merchant/"
-PRICE = os.getenv("PRICE", "0.32")
+PRICE = "0.32"
 
-# Convert admin IDs from string to set of integers
-ADMIN_IDS = set()
-admin_ids_str = os.getenv("ADMIN_IDS", "2103379072,6927331058")
-for id_str in admin_ids_str.split(','):
-    try:
-        ADMIN_IDS.add(int(id_str.strip()))
-    except ValueError:
-        logger.warning(f"Invalid admin ID: {id_str}")
-
-logger.info(f"Admin IDs configured: {ADMIN_IDS}")
+ADMIN_IDS = {2103379072, 6927331058}
 
 app = Flask(__name__)
 
+# Railway PostgreSQL connection
+DATABASE_URL = "postgresql://postgres:zTFbouZOdiuXYvmBvpTvLLkyJYOORSrN@maglev.proxy.rlwy.net:17420/railway"
+
 # Database connection pool
-connection_pool = pool.SimpleConnectionPool(
-    minconn=2,  # Minimum connections
-    maxconn=20,  # Maximum connections
-    dsn=DATABASE_URL
-)
+connection_pool = pool.SimpleConnectionPool(1, 10, DATABASE_URL)
 
 def get_db_connection():
     return connection_pool.getconn()
@@ -101,15 +80,13 @@ def init_db():
                 )
             ''')
             
-            # Create indexes for faster lookups
+            # Create an index for faster lookups
             c.execute('CREATE INDEX IF NOT EXISTS idx_imei_checks_user_id ON imei_checks (user_id)')
             c.execute('CREATE INDEX IF NOT EXISTS idx_imei_checks_imei ON imei_checks (imei)')
             c.execute('CREATE INDEX IF NOT EXISTS idx_imei_checks_order_id ON imei_checks (order_id)')
-            c.execute('CREATE INDEX IF NOT EXISTS idx_imei_checks_check_time ON imei_checks (check_time)')
-            c.execute('CREATE INDEX IF NOT EXISTS idx_imei_checks_payment_status ON imei_checks (payment_status)')
             
             conn.commit()
-            logger.info("PostgreSQL Database initialized successfully")
+            logger.info("PostgreSQL Database initialized on Railway")
     except Exception as e:
         logger.error(f"Database initialization error: {e}")
         conn.rollback()
@@ -123,25 +100,6 @@ init_db()
 application = Application.builder().token(TOKEN).build()
 user_states = {}
 user_request_times = {}
-
-# IMEI validation function
-def validate_imei(imei):
-    # Basic validation (length and digits)
-    if not imei.isdigit() or len(imei) != 15:
-        return False
-        
-    # Luhn algorithm check (IMEI validation)
-    sum = 0
-    double = False
-    for i in range(len(imei) - 1, -1, -1):
-        digit = int(imei[i])
-        if double:
-            digit *= 2
-            if digit > 9:
-                digit -= 9
-        sum += digit
-        double = not double
-    return sum % 10 == 0
 
 # Rate limiting function
 def is_rate_limited(user_id, limit_seconds=5):
@@ -275,13 +233,7 @@ def main_menu_keyboard():
 # Handlers
 def register_handlers():
     async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        user = update.effective_user
-        welcome_message = (
-            f"👋 Welcome {user.first_name}!\n\n"
-            "I can help you check IMEI information for your device.\n"
-            "Choose an option from the menu below:"
-        )
-        await update.message.reply_text(welcome_message, reply_markup=main_menu_keyboard())
+        await update.message.reply_text("👋 Welcome! Choose an option:", reply_markup=main_menu_keyboard())
 
     async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         keyboard = [[KeyboardButton("🔙 Back")]]
@@ -318,143 +270,64 @@ def register_handlers():
 
     async def stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = update.effective_user.id
-        logger.info(f"Stats command called by user {user_id}")
         
         if user_id not in ADMIN_IDS:
-            logger.info(f"User {user_id} not in admin list {ADMIN_IDS}")
             await update.message.reply_text("🚫 You are not authorized to view stats.")
             return
 
-        # Send initial message to indicate processing
-        processing_msg = await update.message.reply_text("⏳ Fetching statistics...")
-        
         try:
             conn = get_db_connection()
-            stats_data = {}
-            
             try:
                 with conn.cursor() as c:
-                    # Basic stats
-                    try:
-                        c.execute("SELECT COUNT(*) FROM imei_checks WHERE payment_status = 'paid'")
-                        stats_data['total_paid'] = c.fetchone()[0]
-                    except Exception as e:
-                        logger.error(f"Error querying total_paid: {e}")
-                        stats_data['total_paid'] = "Error"
+                    c.execute("SELECT COUNT(*) FROM imei_checks WHERE payment_status = 'paid'")
+                    total_paid = c.fetchone()[0]
+
+                    c.execute("SELECT COUNT(*) FROM imei_checks")
+                    total_requests = c.fetchone()[0]
+
+                    c.execute("SELECT COUNT(DISTINCT user_id) FROM imei_checks")
+                    unique_users = c.fetchone()[0]
                     
-                    try:
-                        c.execute("SELECT COUNT(*) FROM imei_checks")
-                        stats_data['total_requests'] = c.fetchone()[0]
-                    except Exception as e:
-                        logger.error(f"Error querying total_requests: {e}")
-                        stats_data['total_requests'] = "Error"
+                    c.execute("SELECT SUM(CAST(payment_amount AS DECIMAL)) FROM imei_checks WHERE payment_status = 'paid'")
+                    total_revenue = c.fetchone()[0] or 0
                     
-                    try:
-                        c.execute("SELECT COUNT(DISTINCT user_id) FROM imei_checks")
-                        stats_data['unique_users'] = c.fetchone()[0]
-                    except Exception as e:
-                        logger.error(f"Error querying unique_users: {e}")
-                        stats_data['unique_users'] = "Error"
+                    c.execute("""
+                        SELECT DATE(check_time), COUNT(*) 
+                        FROM imei_checks 
+                        WHERE payment_status = 'paid' 
+                        GROUP BY DATE(check_time) 
+                        ORDER BY DATE(check_time) DESC 
+                        LIMIT 7
+                    """)
+                    daily_stats = c.fetchall()
                     
-                    try:
-                        c.execute("SELECT SUM(CAST(payment_amount AS DECIMAL)) FROM imei_checks WHERE payment_status = 'paid'")
-                        result = c.fetchone()[0]
-                        stats_data['total_revenue'] = result if result else 0
-                    except Exception as e:
-                        logger.error(f"Error querying total_revenue: {e}")
-                        stats_data['total_revenue'] = "Error"
+                    c.execute("""
+                        SELECT flow_status, COUNT(*) 
+                        FROM imei_checks 
+                        GROUP BY flow_status
+                    """)
+                    flow_stats = c.fetchall()
                     
-                    # Daily stats for the last 7 days
-                    try:
-                        c.execute("""
-                            SELECT DATE(check_time) as date, COUNT(*) as count
-                            FROM imei_checks 
-                            WHERE payment_status = 'paid' AND check_time >= NOW() - INTERVAL
-                            SELECT DATE(check_time) as date, COUNT(*) as count
-                            FROM imei_checks 
-                            WHERE payment_status = 'paid' AND check_time >= NOW() - INTERVAL '7 days'
-                            GROUP BY DATE(check_time) 
-                            ORDER BY DATE(check_time) DESC
-                        """)
-                        stats_data['daily_stats'] = c.fetchall()
-                    except Exception as e:
-                        logger.error(f"Error querying daily_stats: {e}")
-                        stats_data['daily_stats'] = []
-                    
-                    # Flow status distribution
-                    try:
-                        c.execute("""
-                            SELECT flow_status, COUNT(*) 
-                            FROM imei_checks 
-                            GROUP BY flow_status
-                        """)
-                        stats_data['flow_stats'] = c.fetchall()
-                    except Exception as e:
-                        logger.error(f"Error querying flow_stats: {e}")
-                        stats_data['flow_stats'] = []
+                    daily_report = "\n".join([f"• {date.strftime('%Y-%m-%d')}: {count} payments" for date, count in daily_stats])
+                    flow_report = "\n".join([f"• {status}: {count} users" for status, count in flow_stats])
+
+                msg = (
+                    "📊 *Bot Usage Stats:*\n"
+                    f"• Total IMEI checks: *{total_requests}*\n"
+                    f"• Successful payments: *{total_paid}*\n"
+                    f"• Unique users: *{unique_users}*\n"
+                    f"• Total revenue: *${total_revenue:.2f} USD*\n\n"
+                    f"📅 *Last 7 Days:*\n{daily_report}\n\n"
+                    f"🔄 *User Flow:*\n{flow_report}"
+                )
+
+                await update.message.reply_text(msg, parse_mode="Markdown")
             finally:
                 release_db_connection(conn)
-            
-            # Format the stats message
-            daily_report = "\n".join([f"• {date.strftime('%Y-%m-%d')}: {count} payments" for date, count in stats_data.get('daily_stats', [])])
-            if not daily_report:
-                daily_report = "• No payments in the last 7 days"
-                
-            flow_report = "\n".join([f"• {status}: {count} users" for status, count in stats_data.get('flow_stats', [])])
-            if not flow_report:
-                flow_report = "• No flow status data available"
-            
-            total_revenue = stats_data.get('total_revenue', 0)
-            if isinstance(total_revenue, (int, float)):
-                revenue_display = f"${total_revenue:.2f} USD"
-            else:
-                revenue_display = "Error calculating"
-
-            msg = (
-                "📊 *Bot Usage Stats:*\n"
-                f"• Total IMEI checks: *{stats_data.get('total_requests', 'Error')}*\n"
-                f"• Successful payments: *{stats_data.get('total_paid', 'Error')}*\n"
-                f"• Unique users: *{stats_data.get('unique_users', 'Error')}*\n"
-                f"• Total revenue: *{revenue_display}*\n\n"
-                f"📅 *Last 7 Days:*\n{daily_report}\n\n"
-                f"🔄 *User Flow:*\n{flow_report}"
-            )
-
-            # Update the processing message with results
-            await context.bot.edit_message_text(
-                chat_id=update.effective_chat.id,
-                message_id=processing_msg.message_id,
-                text=msg,
-                parse_mode="Markdown"
-            )
-            
         except Exception as e:
-            logger.error(f"/stats command error: {e}")
+            logger.error(f"/stats error: {e}")
             logger.error(traceback.format_exc())
-            await context.bot.edit_message_text(
-                chat_id=update.effective_chat.id,
-                message_id=processing_msg.message_id,
-                text=f"❌ Failed to load stats: {type(e).__name__}\n\nPlease check server logs for details."
-            )
-
-    async def db_test(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        user_id = update.effective_user.id
-        
-        if user_id not in ADMIN_IDS:
-            await update.message.reply_text("🚫 Not authorized.")
-            return
-            
-        try:
-            conn = get_db_connection()
-            try:
-                with conn.cursor() as c:
-                    c.execute("SELECT 1 as test")
-                    result = c.fetchone()[0]
-                    await update.message.reply_text(f"✅ Database connection successful: {result}")
-            finally:
-                release_db_connection(conn)
-        except Exception as e:
-            await update.message.reply_text(f"❌ Database connection failed: {str(e)}")
+            await update.message.reply_text("❌ Failed to load stats.")
 
     async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = update.effective_user.id
@@ -475,20 +348,9 @@ def register_handlers():
             await help_cmd(update, context)
         elif user_states.get(user_id) == "awaiting_imei":
             imei = text.strip()
-            
-            # Validate IMEI format
             if not imei.isdigit() or len(imei) != 15:
                 await update.message.reply_text("❌ Invalid IMEI. It must be 15 digits.", reply_markup=main_menu_keyboard())
                 return
-
-            # Optional: Validate IMEI using Luhn algorithm
-            if not validate_imei(imei):
-                await update.message.reply_text(
-                    "⚠️ Warning: This IMEI number appears to be invalid. Please double-check it.\n"
-                    "If you're sure it's correct, you can proceed with payment, but we cannot guarantee results.",
-                    reply_markup=main_menu_keyboard()
-                )
-                # Continue anyway, as some users might have valid IMEIs that fail the check
 
             order_id = str(uuid.uuid4())
             
@@ -536,7 +398,6 @@ def register_handlers():
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("help", help_cmd))
     application.add_handler(CommandHandler("stats", stats_cmd))
-    application.add_handler(CommandHandler("dbtest", db_test))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler))
 
 register_handlers()
@@ -560,7 +421,7 @@ def telegram_webhook():
         loop.run_until_complete(handle())
         return "OK"
     except Exception as e:
-        logger.error(f"Webhook error: {str(e)}")
+        logger.error(f"Error: {str(e)}")
         logger.error(traceback.format_exc())
         return "Error", 500
 
@@ -695,60 +556,16 @@ def admin_dashboard():
         logger.error(f"Admin dashboard error: {e}")
         return "Error loading dashboard", 500
 
-@app.route("/export-data")
-def export_data():
-    try:
-        conn = get_db_connection()
-        try:
-            with conn.cursor() as cursor:
-                # Get column names
-                cursor.execute("SELECT column_name FROM information_schema.columns WHERE table_name = 'imei_checks' ORDER BY ordinal_position")
-                headers = [row[0] for row in cursor.fetchall()]
-                
-                # Get data
-                cursor.execute("SELECT * FROM imei_checks")
-                rows = cursor.fetchall()
-                
-                # Create CSV content
-                import csv
-                import io
-                
-                output = io.StringIO()
-                writer = csv.writer(output)
-                writer.writerow(headers)
-                writer.writerows(rows)
-                
-                # Return as downloadable file
-                from flask import Response
-                
-                return Response(
-                    output.getvalue(),
-                    mimetype="text/csv",
-                    headers={"Content-disposition": "attachment; filename=imei_checks_export.csv"}
-                )
-        finally:
-            release_db_connection(conn)
-    except Exception as e:
-        logger.error(f"Data export error: {e}")
-        return f"Error exporting data: {str(e)}", 500
-
 def send_imei_result(user_id, imei, order_id):
     try:
-        # Send initial processing message
-        processing_msg = asyncio.run(application.bot.send_message(
-            chat_id=user_id, 
-            text="⏳ Processing your IMEI check. Please wait..."
-        ))
-        
         params = {"api_key": IMEI_API_KEY, "checker": "simlock2", "number": imei}
         res = requests.get(IMEI_API_URL, params=params, timeout=15)
         
         # More detailed error handling
         if res.status_code != 200:
             logger.error(f"API error: Status {res.status_code}, Response: {res.text}")
-            asyncio.run(application.bot.edit_message_text(
+            asyncio.run(application.bot.send_message(
                 chat_id=user_id, 
-                message_id=processing_msg.message_id,
                 text="❌ Service temporarily unavailable. Please try again later.",
                 parse_mode="Markdown"
             ))
@@ -798,13 +615,7 @@ def send_imei_result(user_id, imei, order_id):
                 flow_status='completed_successfully'
             )
 
-        # Edit the processing message with the result
-        asyncio.run(application.bot.edit_message_text(
-            chat_id=user_id, 
-            message_id=processing_msg.message_id,
-            text=msg, 
-            parse_mode="Markdown"
-        ))
+        asyncio.run(application.bot.send_message(chat_id=user_id, text=msg, parse_mode="Markdown"))
         
         # Notify admins about successful payment
         admin_msg = f"💰 New payment received!\n👤 User ID: {user_id}\n📱 IMEI: {imei}"
@@ -942,7 +753,6 @@ if not os.path.exists('templates/admin_dashboard.html'):
         .paid { background-color: #d4edda; color: #155724; }
         .unpaid { background-color: #f8d7da; color: #721c24; }
         .refresh { float: right; padding: 10px 15px; background-color: #007bff; color: white; text-decoration: none; border-radius: 5px; }
-        .export { float: right; padding: 10px 15px; background-color: #28a745; color: white; text-decoration: none; border-radius: 5px; margin-right: 10px; }
         .flow-status { font-size: 12px; padding: 3px 6px; border-radius: 3px; background-color: #e9ecef; }
         .completed { background-color: #d4edda; color: #155724; }
         .error { background-color: #f8d7da; color: #721c24; }
@@ -955,7 +765,6 @@ if not os.path.exists('templates/admin_dashboard.html'):
     <div class="container">
         <h1>IMEI Checker Bot - Admin Dashboard</h1>
         <a href="/admin/dashboard" class="refresh">Refresh</a>
-        <a href="/export-data" class="export">Export Data</a>
         
         <div class="stats">
             <div class="stat-card">
@@ -1069,6 +878,9 @@ if not os.path.exists('templates/admin_dashboard.html'):
 
 if __name__ == "__main__":
     try:
+        # Import psycopg2.extras for JSON support
+        import psycopg2.extras
+        
         # Set webhook
         set_webhook()
         
