@@ -14,6 +14,8 @@ import asyncio
 import traceback
 import time
 from psycopg2 import pool
+import json
+from datetime import datetime
 
 # Logging setup
 logging.basicConfig(
@@ -55,29 +57,33 @@ def init_db():
     conn = get_db_connection()
     try:
         with conn.cursor() as c:
-            # Create payments table if it doesn't exist
+            # Create a more comprehensive imei_checks table
             c.execute('''
-                CREATE TABLE IF NOT EXISTS payments (
-                    order_id TEXT PRIMARY KEY,
-                    user_id BIGINT,
-                    imei TEXT,
-                    amount TEXT,
-                    currency TEXT,
-                    paid BOOLEAN DEFAULT FALSE,
-                    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+                CREATE TABLE IF NOT EXISTS imei_checks (
+                    id SERIAL PRIMARY KEY,
+                    order_id TEXT UNIQUE,
+                    imei TEXT NOT NULL,
+                    user_id BIGINT NOT NULL,
+                    username TEXT,
+                    first_name TEXT,
+                    last_name TEXT,
+                    check_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    imei_found BOOLEAN DEFAULT NULL,
+                    payment_status TEXT DEFAULT 'initiated',
+                    payment_amount TEXT,
+                    payment_currency TEXT DEFAULT 'USD',
+                    payeer_client_id TEXT,
+                    payeer_client_email TEXT,
+                    flow_status TEXT DEFAULT 'imei_submitted',
+                    api_response JSONB,
+                    notes TEXT
                 )
             ''')
             
-            # Create a statistics table to track usage
-            c.execute('''
-                CREATE TABLE IF NOT EXISTS stats (
-                    id SERIAL PRIMARY KEY,
-                    event_type TEXT,
-                    user_id BIGINT,
-                    data JSONB,
-                    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
-                )
-            ''')
+            # Create an index for faster lookups
+            c.execute('CREATE INDEX IF NOT EXISTS idx_imei_checks_user_id ON imei_checks (user_id)')
+            c.execute('CREATE INDEX IF NOT EXISTS idx_imei_checks_imei ON imei_checks (imei)')
+            c.execute('CREATE INDEX IF NOT EXISTS idx_imei_checks_order_id ON imei_checks (order_id)')
             
             conn.commit()
             logger.info("PostgreSQL Database initialized on Railway")
@@ -104,52 +110,111 @@ def is_rate_limited(user_id, limit_seconds=5):
     user_request_times[user_id] = current_time
     return False
 
-# Log event to stats table
-def log_event(event_type, user_id, data=None):
-    if data is None:
-        data = {}
-    
+# Update IMEI check record
+def update_imei_check(order_id=None, imei=None, user_id=None, **kwargs):
+    conn = get_db_connection()
+    try:
+        with conn.cursor() as c:
+            if order_id:
+                # Build the SET part of the query dynamically
+                set_parts = []
+                params = []
+                
+                for key, value in kwargs.items():
+                    set_parts.append(f"{key} = %s")
+                    params.append(value)
+                
+                if not set_parts:
+                    return False
+                
+                query = f"UPDATE imei_checks SET {', '.join(set_parts)} WHERE order_id = %s"
+                params.append(order_id)
+                
+                c.execute(query, params)
+                conn.commit()
+                return True
+            elif imei and user_id:
+                # Find the most recent check for this IMEI and user
+                c.execute(
+                    "SELECT order_id FROM imei_checks WHERE imei = %s AND user_id = %s ORDER BY check_time DESC LIMIT 1",
+                    (imei, user_id)
+                )
+                result = c.fetchone()
+                if result:
+                    order_id = result[0]
+                    return update_imei_check(order_id=order_id, **kwargs)
+            
+            return False
+    except Exception as e:
+        logger.error(f"Error updating IMEI check: {e}")
+        conn.rollback()
+        return False
+    finally:
+        release_db_connection(conn)
+
+# Create new IMEI check record
+def create_imei_check(order_id, imei, user_id, username=None, first_name=None, last_name=None):
     conn = get_db_connection()
     try:
         with conn.cursor() as c:
             c.execute(
-                "INSERT INTO stats (event_type, user_id, data) VALUES (%s, %s, %s::jsonb)",
-                (event_type, user_id, psycopg2.extras.Json(data))
+                """
+                INSERT INTO imei_checks 
+                (order_id, imei, user_id, username, first_name, last_name, payment_amount, flow_status) 
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                """,
+                (order_id, imei, user_id, username, first_name, last_name, PRICE, 'imei_submitted')
             )
             conn.commit()
+            return True
     except Exception as e:
-        logger.error(f"Failed to log event: {e}")
+        logger.error(f"Error creating IMEI check: {e}")
         conn.rollback()
+        return False
     finally:
         release_db_connection(conn)
 
-# Main menu keyboard
-def main_menu_keyboard():
-    return ReplyKeyboardMarkup(
-        [[KeyboardButton("🔍 Check IMEI")], [KeyboardButton("❓ Help")]], resize_keyboard=True
-    )
-
-# Process payment function to avoid duplicate processing
-def process_payment(order_id):
+# Process payment function with enhanced tracking
+def process_payment(order_id, payeer_client_id=None, payeer_client_email=None):
     conn = get_db_connection()
     try:
         with conn.cursor() as c:
-            # First check if already paid
-            c.execute("SELECT user_id, imei, paid FROM payments WHERE order_id = %s", (order_id,))
+            # Get the current record
+            c.execute(
+                "SELECT user_id, imei, payment_status FROM imei_checks WHERE order_id = %s",
+                (order_id,)
+            )
             row = c.fetchone()
             if not row:
                 return None, None, False
                 
-            user_id, imei, paid = row
-            if paid:
-                return user_id, imei, True  # Already processed
-                
-            # Mark as paid
-            c.execute("UPDATE payments SET paid = TRUE WHERE order_id = %s", (order_id,))
-            conn.commit()
+            user_id, imei, payment_status = row
             
-            # Log successful payment
-            log_event("payment_success", user_id, {"order_id": order_id, "imei": imei})
+            # Check if already paid
+            if payment_status == 'paid':
+                return user_id, imei, True  # Already processed
+            
+            # Update payment information
+            update_data = {
+                'payment_status': 'paid',
+                'flow_status': 'payment_completed',
+                'payeer_client_id': payeer_client_id,
+                'payeer_client_email': payeer_client_email
+            }
+            
+            set_parts = []
+            params = []
+            
+            for key, value in update_data.items():
+                if value is not None:
+                    set_parts.append(f"{key} = %s")
+                    params.append(value)
+            
+            if set_parts:
+                query = f"UPDATE imei_checks SET {', '.join(set_parts)} WHERE order_id = %s"
+                params.append(order_id)
+                c.execute(query, params)
+                conn.commit()
             
             return user_id, imei, False  # Newly processed
     except Exception as e:
@@ -159,17 +224,18 @@ def process_payment(order_id):
     finally:
         release_db_connection(conn)
 
+# Main menu keyboard
+def main_menu_keyboard():
+    return ReplyKeyboardMarkup(
+        [[KeyboardButton("🔍 Check IMEI")], [KeyboardButton("❓ Help")]], resize_keyboard=True
+    )
+
 # Handlers
 def register_handlers():
     async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        user_id = update.effective_user.id
-        log_event("start_command", user_id)
         await update.message.reply_text("👋 Welcome! Choose an option:", reply_markup=main_menu_keyboard())
 
     async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        user_id = update.effective_user.id
-        log_event("help_command", user_id)
-        
         keyboard = [[KeyboardButton("🔙 Back")]]
         reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
@@ -213,29 +279,37 @@ def register_handlers():
             conn = get_db_connection()
             try:
                 with conn.cursor() as c:
-                    c.execute("SELECT COUNT(*) FROM payments WHERE paid = TRUE")
+                    c.execute("SELECT COUNT(*) FROM imei_checks WHERE payment_status = 'paid'")
                     total_paid = c.fetchone()[0]
 
-                    c.execute("SELECT COUNT(*) FROM payments")
+                    c.execute("SELECT COUNT(*) FROM imei_checks")
                     total_requests = c.fetchone()[0]
 
-                    c.execute("SELECT COUNT(DISTINCT user_id) FROM payments")
+                    c.execute("SELECT COUNT(DISTINCT user_id) FROM imei_checks")
                     unique_users = c.fetchone()[0]
                     
-                    c.execute("SELECT SUM(CAST(amount AS DECIMAL)) FROM payments WHERE paid = TRUE")
+                    c.execute("SELECT SUM(CAST(payment_amount AS DECIMAL)) FROM imei_checks WHERE payment_status = 'paid'")
                     total_revenue = c.fetchone()[0] or 0
                     
                     c.execute("""
-                        SELECT DATE(created_at), COUNT(*) 
-                        FROM payments 
-                        WHERE paid = TRUE 
-                        GROUP BY DATE(created_at) 
-                        ORDER BY DATE(created_at) DESC 
+                        SELECT DATE(check_time), COUNT(*) 
+                        FROM imei_checks 
+                        WHERE payment_status = 'paid' 
+                        GROUP BY DATE(check_time) 
+                        ORDER BY DATE(check_time) DESC 
                         LIMIT 7
                     """)
                     daily_stats = c.fetchall()
                     
+                    c.execute("""
+                        SELECT flow_status, COUNT(*) 
+                        FROM imei_checks 
+                        GROUP BY flow_status
+                    """)
+                    flow_stats = c.fetchall()
+                    
                     daily_report = "\n".join([f"• {date.strftime('%Y-%m-%d')}: {count} payments" for date, count in daily_stats])
+                    flow_report = "\n".join([f"• {status}: {count} users" for status, count in flow_stats])
 
                 msg = (
                     "📊 *Bot Usage Stats:*\n"
@@ -243,7 +317,8 @@ def register_handlers():
                     f"• Successful payments: *{total_paid}*\n"
                     f"• Unique users: *{unique_users}*\n"
                     f"• Total revenue: *${total_revenue:.2f} USD*\n\n"
-                    f"📅 *Last 7 Days:*\n{daily_report}"
+                    f"📅 *Last 7 Days:*\n{daily_report}\n\n"
+                    f"🔄 *User Flow:*\n{flow_report}"
                 )
 
                 await update.message.reply_text(msg, parse_mode="Markdown")
@@ -257,6 +332,7 @@ def register_handlers():
     async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = update.effective_user.id
         text = update.message.text
+        user = update.effective_user
 
         # Rate limiting check
         if is_rate_limited(user_id):
@@ -276,49 +352,44 @@ def register_handlers():
                 await update.message.reply_text("❌ Invalid IMEI. It must be 15 digits.", reply_markup=main_menu_keyboard())
                 return
 
-            # Log IMEI check request
-            log_event("imei_check_request", user_id, {"imei": imei})
-            
             order_id = str(uuid.uuid4())
-            conn = get_db_connection()
-            try:
-                with conn.cursor() as c:
-                    c.execute(
-                        "INSERT INTO payments (order_id, user_id, imei, amount, currency, paid) VALUES (%s, %s, %s, %s, %s, %s)",
-                        (order_id, user_id, imei, PRICE, "USD", False)
-                    )
-                    conn.commit()
-            except Exception as e:
-                logger.error(f"Database error: {e}")
-                conn.rollback()
+            
+            # Create IMEI check record with user details
+            username = user.username
+            first_name = user.first_name
+            last_name = user.last_name
+
+            if create_imei_check(order_id, imei, user_id, username, first_name, last_name):
+                desc = f"IMEI Check for {imei}"
+                m_desc = base64.b64encode(desc.encode()).decode()
+                sign_string = f"{PAYEER_MERCHANT_ID}:{order_id}:{PRICE}:USD:{m_desc}:{PAYEER_SECRET_KEY}"
+                m_sign = hashlib.sha256(sign_string.encode()).hexdigest().upper()
+
+                payment_data = {
+                    "m_shop": PAYEER_MERCHANT_ID,
+                    "m_orderid": order_id,
+                    "m_amount": PRICE,
+                    "m_curr": "USD",
+                    "m_desc": m_desc,
+                    "m_sign": m_sign,
+                    "m_status_url": f"{BASE_URL}/payeer",
+                    "m_success_url": f"{BASE_URL}/success?m_orderid={order_id}",
+                    "m_fail_url": f"{BASE_URL}/fail?m_orderid={order_id}"
+                }
+
+                payment_url = f"{PAYEER_PAYMENT_URL}?{urlencode(payment_data)}"
+                keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("💳 Pay $0.32 USD", url=payment_url)]])
+                
+                await update.message.reply_text(
+                    f"📱 IMEI: {imei}\nTo receive your result, please complete payment:",
+                    reply_markup=keyboard
+                )
+                
+                # Update flow status to payment_initiated
+                update_imei_check(order_id=order_id, flow_status='payment_initiated')
+            else:
                 await update.message.reply_text("❌ An error occurred. Please try again later.")
-                return
-            finally:
-                release_db_connection(conn)
-
-            desc = f"IMEI Check for {imei}"
-            m_desc = base64.b64encode(desc.encode()).decode()
-            sign_string = f"{PAYEER_MERCHANT_ID}:{order_id}:{PRICE}:USD:{m_desc}:{PAYEER_SECRET_KEY}"
-            m_sign = hashlib.sha256(sign_string.encode()).hexdigest().upper()
-
-            payment_data = {
-                "m_shop": PAYEER_MERCHANT_ID,
-                "m_orderid": order_id,
-                "m_amount": PRICE,
-                "m_curr": "USD",
-                "m_desc": m_desc,
-                "m_sign": m_sign,
-                "m_status_url": f"{BASE_URL}/payeer",
-                "m_success_url": f"{BASE_URL}/success?m_orderid={order_id}",
-                "m_fail_url": f"{BASE_URL}/fail"
-            }
-
-            payment_url = f"{PAYEER_PAYMENT_URL}?{urlencode(payment_data)}"
-            keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("💳 Pay $0.32 USD", url=payment_url)]])
-            await update.message.reply_text(
-                f"📱 IMEI: {imei}\nTo receive your result, please complete payment:",
-                reply_markup=keyboard
-            )
+                
             user_states[user_id] = None
         else:
             await update.message.reply_text("❗ Please use the menu or /start to begin.", reply_markup=main_menu_keyboard())
@@ -373,13 +444,23 @@ def payeer_callback():
 
         order_id = form.get("m_orderid")
         if form.get("m_status") != "success":
+            # Update payment status to failed
+            update_imei_check(order_id=order_id, payment_status='failed', flow_status='payment_failed')
             logger.warning(f"Payment not successful for order {order_id}")
             return "Payment not successful", 400
 
-        user_id, imei, already_processed = process_payment(order_id)
+        # Extract Payeer client details if available
+        payeer_client_id = form.get("client_id", None)
+        payeer_client_email = form.get("client_email", None)
+        
+        user_id, imei, already_processed = process_payment(
+            order_id, 
+            payeer_client_id=payeer_client_id, 
+            payeer_client_email=payeer_client_email
+        )
         
         if user_id and imei and not already_processed:
-            threading.Thread(target=send_imei_result, args=(user_id, imei)).start()
+            threading.Thread(target=send_imei_result, args=(user_id, imei, order_id)).start()
             
         return "OK"
     except Exception as e:
@@ -394,10 +475,14 @@ def success():
         return render_template("fail.html", message="Invalid order ID")
 
     try:
+        # Update flow status even if payment is not yet confirmed
+        update_imei_check(order_id=order_id, flow_status='payment_page_success')
+        
+        # Try to process payment if not already processed
         user_id, imei, already_processed = process_payment(order_id)
         
         if user_id and imei and not already_processed:
-            threading.Thread(target=send_imei_result, args=(user_id, imei)).start()
+            threading.Thread(target=send_imei_result, args=(user_id, imei, order_id)).start()
             
         return render_template("success.html")
     except Exception as e:
@@ -407,6 +492,11 @@ def success():
 
 @app.route("/fail")
 def fail():
+    order_id = request.args.get("m_orderid")
+    if order_id:
+        # Update flow status to payment_page_failed
+        update_imei_check(order_id=order_id, flow_status='payment_page_failed')
+    
     return render_template("fail.html", message="Payment was not completed")
 
 @app.route("/health")
@@ -429,25 +519,28 @@ def admin_dashboard():
     try:
         conn = get_db_connection()
         with conn.cursor() as c:
-            c.execute("SELECT COUNT(*) FROM payments WHERE paid = TRUE")
+            c.execute("SELECT COUNT(*) FROM imei_checks WHERE payment_status = 'paid'")
             total_paid = c.fetchone()[0]
 
-            c.execute("SELECT COUNT(*) FROM payments")
+            c.execute("SELECT COUNT(*) FROM imei_checks")
             total_requests = c.fetchone()[0]
 
-            c.execute("SELECT COUNT(DISTINCT user_id) FROM payments")
+            c.execute("SELECT COUNT(DISTINCT user_id) FROM imei_checks")
             unique_users = c.fetchone()[0]
             
-            c.execute("SELECT SUM(CAST(amount AS DECIMAL)) FROM payments WHERE paid = TRUE")
+            c.execute("SELECT SUM(CAST(payment_amount AS DECIMAL)) FROM imei_checks WHERE payment_status = 'paid'")
             total_revenue = c.fetchone()[0] or 0
             
             c.execute("""
-                SELECT order_id, user_id, imei, amount, currency, paid, created_at
-                FROM payments
-                ORDER BY created_at DESC
+                SELECT 
+                    id, order_id, imei, user_id, username, check_time, 
+                    imei_found, payment_status, payment_amount, 
+                    payeer_client_id, payeer_client_email, flow_status
+                FROM imei_checks
+                ORDER BY check_time DESC
                 LIMIT 50
             """)
-            recent_payments = c.fetchall()
+            recent_checks = c.fetchall()
         
         release_db_connection(conn)
         
@@ -457,13 +550,13 @@ def admin_dashboard():
             total_requests=total_requests,
             unique_users=unique_users,
             total_revenue=total_revenue,
-            recent_payments=recent_payments
+            recent_checks=recent_checks
         )
     except Exception as e:
         logger.error(f"Admin dashboard error: {e}")
         return "Error loading dashboard", 500
 
-def send_imei_result(user_id, imei):
+def send_imei_result(user_id, imei, order_id):
     try:
         params = {"api_key": IMEI_API_KEY, "checker": "simlock2", "number": imei}
         res = requests.get(IMEI_API_URL, params=params, timeout=15)
@@ -477,15 +570,31 @@ def send_imei_result(user_id, imei):
                 parse_mode="Markdown"
             ))
             
-            # Log API error
-            log_event("api_error", user_id, {"imei": imei, "status_code": res.status_code})
+            # Update database with API error
+            update_imei_check(
+                order_id=order_id, 
+                flow_status='api_error',
+                notes=f"API error: Status {res.status_code}"
+            )
             return
             
         data = res.json()
+        
+        # Store API response in database
+        update_imei_check(
+            order_id=order_id,
+            api_response=psycopg2.extras.Json(data)
+        )
 
         if 'error' in data or not any(value for key, value in data.items() if key != 'error'):
             msg = "⚠️ IMEI not found in the database. Please ensure it is correct."
-            log_event("imei_not_found", user_id, {"imei": imei})
+            
+            # Update database with IMEI not found
+            update_imei_check(
+                order_id=order_id,
+                imei_found=False,
+                flow_status='imei_not_found'
+            )
         else:
             msg = "✅ *Payment successful!*\n\n"
             msg += "📱 *IMEI Info:*\n"
@@ -499,8 +608,12 @@ def send_imei_result(user_id, imei):
             msg += f"🔹 *Replaced:* {data.get('is replaced', 'N/A')}\n"
             msg += f"🔹 *SIM Lock:* {data.get('SIM Lock', 'N/A')}"
             
-            # Log successful IMEI check
-            log_event("imei_check_success", user_id, {"imei": imei})
+            # Update database with IMEI found
+            update_imei_check(
+                order_id=order_id,
+                imei_found=True,
+                flow_status='completed_successfully'
+            )
 
         asyncio.run(application.bot.send_message(chat_id=user_id, text=msg, parse_mode="Markdown"))
         
@@ -516,7 +629,13 @@ def send_imei_result(user_id, imei):
         logger.error(f"API request error: {str(e)}")
         error_msg = "❌ Error connecting to IMEI service. Please try again later or contact support."
         asyncio.run(application.bot.send_message(chat_id=user_id, text=error_msg))
-        log_event("api_connection_error", user_id, {"imei": imei, "error": str(e)})
+        
+        # Update database with API connection error
+        update_imei_check(
+            order_id=order_id,
+            flow_status='api_connection_error',
+            notes=str(e)
+        )
     except Exception as e:
         logger.error(f"Sending result error: {str(e)}")
         logger.error(traceback.format_exc())
@@ -525,7 +644,13 @@ def send_imei_result(user_id, imei):
             asyncio.run(application.bot.send_message(chat_id=user_id, text=error_msg))
         except:
             logger.error(f"Failed to send error message to user {user_id}")
-        log_event("unexpected_error", user_id, {"imei": imei, "error": str(e)})
+        
+        # Update database with unexpected error
+        update_imei_check(
+            order_id=order_id,
+            flow_status='unexpected_error',
+            notes=str(e)
+        )
 
 async def set_webhook_async():
     try:
@@ -620,14 +745,20 @@ if not os.path.exists('templates/admin_dashboard.html'):
         .stat-card { flex: 1; min-width: 200px; background-color: #f8f9fa; margin: 10px; padding: 20px; border-radius: 5px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
         .stat-value { font-size: 24px; font-weight: bold; color: #007bff; }
         .stat-label { color: #6c757d; margin-top: 5px; }
-        table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+        table { width: 100%; border-collapse: collapse; margin-top: 20px; overflow-x: auto; display: block; }
         th, td { padding: 12px 15px; text-align: left; border-bottom: 1px solid #ddd; }
-        th { background-color: #f8f9fa; color: #333; }
+        th { background-color: #f8f9fa; color: #333; position: sticky; top: 0; }
         tr:hover { background-color: #f1f1f1; }
         .status { padding: 5px 10px; border-radius: 3px; font-size: 12px; }
         .paid { background-color: #d4edda; color: #155724; }
         .unpaid { background-color: #f8d7da; color: #721c24; }
         .refresh { float: right; padding: 10px 15px; background-color: #007bff; color: white; text-decoration: none; border-radius: 5px; }
+        .flow-status { font-size: 12px; padding: 3px 6px; border-radius: 3px; background-color: #e9ecef; }
+        .completed { background-color: #d4edda; color: #155724; }
+        .error { background-color: #f8d7da; color: #721c24; }
+        .pending { background-color: #fff3cd; color: #856404; }
+        .timestamp { font-size: 12px; color: #6c757d; }
+        .search-box { margin: 20px 0; padding: 10px; width: 100%; border: 1px solid #ddd; border-radius: 5px; }
     </style>
 </head>
 <body>
@@ -641,6 +772,10 @@ if not os.path.exists('templates/admin_dashboard.html'):
                 <div class="stat-label">Total Requests</div>
             </div>
             <div class="stat-card">
+                <div class="stat-value">{{ total_paid }}</div>
+                <div class="stat-label">Successful Payments</div>
+            </div>
+            <div class="stat-card">
                 <div class="stat-value">{{ unique_users }}</div>
                 <div class="stat-label">Unique Users</div>
             </div>
@@ -650,38 +785,94 @@ if not os.path.exists('templates/admin_dashboard.html'):
             </div>
         </div>
         
-        <h2>Recent Payments</h2>
+        <h2>Recent IMEI Checks</h2>
+        <input type="text" id="searchInput" class="search-box" placeholder="Search by IMEI, username, or user ID...">
+        
         <table>
             <thead>
                 <tr>
-                    <th>Order ID</th>
-                    <th>User ID</th>
                     <th>IMEI</th>
-                    <th>Amount</th>
-                    <th>Status</th>
-                    <th>Date</th>
+                    <th>Time & Date</th>
+                    <th>User ID</th>
+                    <th>Username</th>
+                    <th>IMEI Found</th>
+                    <th>Payment Status</th>
+                    <th>Payeer Client</th>
+                    <th>Flow Status</th>
                 </tr>
             </thead>
-            <tbody>
-                {% for payment in recent_payments %}
+            <tbody id="checksTable">
+                {% for check in recent_checks %}
                 <tr>
-                    <td>{{ payment[0] }}</td>
-                    <td>{{ payment[1] }}</td>
-                    <td>{{ payment[2] }}</td>
-                    <td>${{ payment[3] }} {{ payment[4] }}</td>
+                    <td>{{ check[2] }}</td>
+                    <td><span class="timestamp">{{ check[5].strftime('%Y-%m-%d %H:%M:%S') }}</span></td>
+                    <td>{{ check[3] }}</td>
+                    <td>{{ check[4] or 'N/A' }}</td>
                     <td>
-                        {% if payment[5] %}
-                        <span class="status paid">Paid</span>
+                        {% if check[6] == True %}
+                        <span class="status paid">Found</span>
+                        {% elif check[6] == False %}
+                        <span class="status unpaid">Not Found</span>
                         {% else %}
-                        <span class="status unpaid">Unpaid</span>
+                        <span class="status">Unknown</span>
                         {% endif %}
                     </td>
-                    <td>{{ payment[6].strftime('%Y-%m-%d %H:%M:%S') }}</td>
+                    <td>
+                        {% if check[7] == 'paid' %}
+                        <span class="status paid">Paid</span>
+                        {% elif check[7] == 'failed' %}
+                        <span class="status unpaid">Failed</span>
+                        {% else %}
+                        <span class="status">{{ check[7] }}</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if check[9] %}
+                        ID: {{ check[9] }}<br>
+                        {% if check[10] %}
+                        Email: {{ check[10] }}
+                        {% endif %}
+                        {% else %}
+                        N/A
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if check[11] == 'completed_successfully' %}
+                        <span class="flow-status completed">Completed</span>
+                        {% elif check[11] in ['api_error', 'api_connection_error', 'unexpected_error'] %}
+                        <span class="flow-status error">{{ check[11] }}</span>
+                        {% elif check[11] in ['payment_initiated', 'payment_page_success'] %}
+                        <span class="flow-status pending">{{ check[11] }}</span>
+                        {% else %}
+                        <span class="flow-status">{{ check[11] }}</span>
+                        {% endif %}
+                    </td>
                 </tr>
                 {% endfor %}
             </tbody>
         </table>
     </div>
+    
+    <script>
+        // Simple search functionality
+        document.getElementById('searchInput').addEventListener('keyup', function() {
+            const searchValue = this.value.toLowerCase();
+            const table = document.getElementById('checksTable');
+            const rows = table.getElementsByTagName('tr');
+            
+            for (let i = 0; i < rows.length; i++) {
+                const imei = rows[i].cells[0].textContent.toLowerCase();
+                const userId = rows[i].cells[2].textContent.toLowerCase();
+                const username = rows[i].cells[3].textContent.toLowerCase();
+                
+                if (imei.includes(searchValue) || userId.includes(searchValue) || username.includes(searchValue)) {
+                    rows[i].style.display = '';
+                } else {
+                    rows[i].style.display = 'none';
+                }
+            }
+        });
+    </script>
 </body>
 </html>''')
 
