@@ -1,12 +1,11 @@
 import os
 import logging
 from flask import Flask, request, jsonify
-import telegram
+import requests
 import hashlib
 import uuid
 import base64
 from urllib.parse import urlencode
-import requests
 from datetime import datetime
 import json
 
@@ -22,6 +21,7 @@ PAYEER_SECRET_KEY = os.getenv("PAYEER_SECRET_KEY")
 BASE_URL = os.getenv("BASE_URL")
 
 # Constants
+TELEGRAM_API = f"https://api.telegram.org/bot{TOKEN}"
 IMEI_API_URL = "https://proimei.info/en/prepaid/api"
 PAYEER_PAYMENT_URL = "https://payeer.com/merchant/"
 PRICE = "0.32"
@@ -30,9 +30,6 @@ ADMIN_IDS = {2103379072, 6927331058}
 # Flask app
 app = Flask(__name__)
 
-# Bot instance (synchronous)
-bot = telegram.Bot(token=TOKEN)
-
 # Storage
 pending_orders = {}
 user_languages = {}
@@ -40,8 +37,8 @@ user_states = {}
 
 # Set webhook
 try:
-    bot.set_webhook(url=f"{BASE_URL}/webhook")
-    logger.info(f"Webhook set to {BASE_URL}/webhook")
+    response = requests.post(f"{TELEGRAM_API}/setWebhook", json={"url": f"{BASE_URL}/webhook"})
+    logger.info(f"Webhook set: {response.json()}")
 except Exception as e:
     logger.error(f"Failed to set webhook: {e}")
 
@@ -80,31 +77,45 @@ def get_text(user_id, key, *args):
 
 def send_message(chat_id, text, reply_markup=None, parse_mode=None):
     try:
-        bot.send_message(
-            chat_id=chat_id,
-            text=text,
-            reply_markup=reply_markup,
-            parse_mode=parse_mode
-        )
+        data = {
+            "chat_id": chat_id,
+            "text": text
+        }
+        if reply_markup:
+            data["reply_markup"] = json.dumps(reply_markup)
+        if parse_mode:
+            data["parse_mode"] = parse_mode
+            
+        response = requests.post(f"{TELEGRAM_API}/sendMessage", json=data)
+        logger.info(f"Message sent: {response.json()}")
     except Exception as e:
         logger.error(f"Failed to send message: {e}")
 
+def answer_callback_query(callback_query_id):
+    try:
+        requests.post(f"{TELEGRAM_API}/answerCallbackQuery", json={"callback_query_id": callback_query_id})
+    except Exception as e:
+        logger.error(f"Failed to answer callback query: {e}")
+
 def handle_start(chat_id):
-    keyboard = telegram.InlineKeyboardMarkup([
-        [
-            telegram.InlineKeyboardButton("🇬🇧 English", callback_data="lang_en"),
-            telegram.InlineKeyboardButton("🇷🇺 Русский", callback_data="lang_ru")
-        ]
-    ])
+    keyboard = {
+        "inline_keyboard": [[
+            {"text": "🇬🇧 English", "callback_data": "lang_en"},
+            {"text": "🇷🇺 Русский", "callback_data": "lang_ru"}
+        ]]
+    }
     send_message(chat_id, texts['en']['choose_language'], reply_markup=keyboard)
 
 def handle_language_selection(chat_id, language):
     user_languages[chat_id] = language
     
-    keyboard = telegram.ReplyKeyboardMarkup([
-        [telegram.KeyboardButton(get_text(chat_id, 'check_imei'))],
-        [telegram.KeyboardButton(get_text(chat_id, 'help'))]
-    ], resize_keyboard=True)
+    keyboard = {
+        "keyboard": [
+            [{"text": get_text(chat_id, 'check_imei')}],
+            [{"text": get_text(chat_id, 'help')}]
+        ],
+        "resize_keyboard": True
+    }
     
     send_message(chat_id, get_text(chat_id, 'language_selected'))
     send_message(chat_id, get_text(chat_id, 'welcome'), reply_markup=keyboard)
@@ -124,10 +135,13 @@ def handle_text(chat_id, text):
     elif user_states.get(chat_id) == "awaiting_imei":
         imei = text.strip()
         if not imei.isdigit() or len(imei) != 15:
-            keyboard = telegram.ReplyKeyboardMarkup([
-                [telegram.KeyboardButton(get_text(chat_id, 'check_imei'))],
-                [telegram.KeyboardButton(get_text(chat_id, 'help'))]
-            ], resize_keyboard=True)
+            keyboard = {
+                "keyboard": [
+                    [{"text": get_text(chat_id, 'check_imei')}],
+                    [{"text": get_text(chat_id, 'help')}]
+                ],
+                "resize_keyboard": True
+            }
             send_message(chat_id, get_text(chat_id, 'invalid_imei'), reply_markup=keyboard)
             return
         
@@ -157,9 +171,11 @@ def handle_text(chat_id, text):
         }
         
         payment_url = f"{PAYEER_PAYMENT_URL}?{urlencode(payment_data)}"
-        keyboard = telegram.InlineKeyboardMarkup([[
-            telegram.InlineKeyboardButton(get_text(chat_id, 'pay_button'), url=payment_url)
-        ]])
+        keyboard = {
+            "inline_keyboard": [[
+                {"text": get_text(chat_id, 'pay_button'), "url": payment_url}
+            ]]
+        }
         
         send_message(chat_id, get_text(chat_id, 'payment_prompt', imei), reply_markup=keyboard)
         user_states[chat_id] = None
@@ -171,31 +187,36 @@ def home():
 @app.route("/webhook", methods=["POST"])
 def webhook():
     try:
-        update = telegram.Update.de_json(request.get_json(force=True), bot)
+        update = request.get_json()
+        logger.info(f"Received update: {update}")
         
-        # Handle different update types
-        if update.message:
-            chat_id = update.message.chat_id
+        # Handle message
+        if "message" in update:
+            message = update["message"]
+            chat_id = message["chat"]["id"]
             
-            if update.message.text:
-                if update.message.text.startswith('/start'):
+            if "text" in message:
+                text = message["text"]
+                if text.startswith('/start'):
                     handle_start(chat_id)
                 else:
-                    handle_text(chat_id, update.message.text)
+                    handle_text(chat_id, text)
         
-        elif update.callback_query:
-            query = update.callback_query
-            chat_id = query.message.chat_id
+        # Handle callback query
+        elif "callback_query" in update:
+            query = update["callback_query"]
+            chat_id = query["message"]["chat"]["id"]
+            data = query["data"]
             
-            if query.data.startswith('lang_'):
-                language = query.data.split('_')[1]
+            if data.startswith('lang_'):
+                language = data.split('_')[1]
                 handle_language_selection(chat_id, language)
-                bot.answer_callback_query(query.id)
+                answer_callback_query(query["id"])
         
         return "OK"
     except Exception as e:
         logger.error(f"Webhook error: {e}")
-        return "OK"  # Return OK anyway to avoid retries
+        return "OK"
 
 @app.route("/payeer", methods=["POST"])
 def payeer_callback():
