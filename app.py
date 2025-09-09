@@ -273,7 +273,7 @@ def payeer_callback():
                             # Method 2: GET request with different parameters
                             res2 = requests.get(IMEI_API_URL, params={
                                 "api_key": IMEI_API_KEY,
-                                "service": "simlock",  # Try without the "2"
+                                "service": "simlock3",  # Try without the "2"
                                 "imei": imei
                             }, timeout=15)
                             
