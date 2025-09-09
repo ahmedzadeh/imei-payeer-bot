@@ -529,11 +529,17 @@ def send_imei_result(user_id, imei, order_id):
         # More detailed error handling
         if res.status_code != 200:
             logger.error(f"API error: Status {res.status_code}, Response: {res.text}")
-            asyncio.run(application.bot.send_message(
-                chat_id=user_id, 
-                text=get_text(user_id, 'service_unavailable'),
-                parse_mode="Markdown"
-            ))
+            # Create new event loop for thread
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            loop.run_until_complete(
+                application.bot.send_message(
+                    chat_id=user_id, 
+                    text=get_text(user_id, 'service_unavailable'),
+                    parse_mode="Markdown"
+                )
+            )
+            loop.close()
             return
             
         data = res.json()
@@ -553,26 +559,47 @@ def send_imei_result(user_id, imei, order_id):
             msg += get_text(user_id, 'replaced_field', data.get('is replaced', 'N/A')) + "\n"
             msg += get_text(user_id, 'simlock_field', data.get('SIM Lock', 'N/A'))
 
-        asyncio.run(application.bot.send_message(chat_id=user_id, text=msg, parse_mode="Markdown"))
+        # Create new event loop for thread
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        loop.run_until_complete(
+            application.bot.send_message(chat_id=user_id, text=msg, parse_mode="Markdown")
+        )
         
         # Notify admins about successful payment
         admin_msg = f"💰 New payment received!\n👤 User ID: {user_id}\n📱 IMEI: {imei}"
         for admin_id in ADMIN_IDS:
             try:
-                asyncio.run(application.bot.send_message(chat_id=admin_id, text=admin_msg))
+                loop.run_until_complete(
+                    application.bot.send_message(chat_id=admin_id, text=admin_msg)
+                )
             except Exception as admin_err:
                 logger.error(f"Failed to notify admin {admin_id}: {admin_err}")
+        
+        loop.close()
                 
     except requests.RequestException as e:
         logger.error(f"API request error: {str(e)}")
         error_msg = get_text(user_id, 'api_error')
-        asyncio.run(application.bot.send_message(chat_id=user_id, text=error_msg))
+        # Create new event loop for thread
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        loop.run_until_complete(
+            application.bot.send_message(chat_id=user_id, text=error_msg)
+        )
+        loop.close()
     except Exception as e:
         logger.error(f"Sending result error: {str(e)}")
         logger.error(traceback.format_exc())
         error_msg = get_text(user_id, 'unexpected_error')
         try:
-            asyncio.run(application.bot.send_message(chat_id=user_id, text=error_msg))
+            # Create new event loop for thread
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            loop.run_until_complete(
+                application.bot.send_message(chat_id=user_id, text=error_msg)
+            )
+            loop.close()
         except:
             logger.error(f"Failed to send error message to user {user_id}")
 
