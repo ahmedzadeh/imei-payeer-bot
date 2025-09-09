@@ -1,18 +1,14 @@
 import os
 import logging
-import asyncio
-from flask import Flask, request
-from telegram import Bot, Update
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, CallbackQueryHandler
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton
+from flask import Flask, request, jsonify
+import telegram
 import hashlib
 import uuid
 import base64
 from urllib.parse import urlencode
 import requests
-import threading
 from datetime import datetime
-import time
+import json
 
 # Logging
 logging.basicConfig(level=logging.INFO)
@@ -34,14 +30,20 @@ ADMIN_IDS = {2103379072, 6927331058}
 # Flask app
 app = Flask(__name__)
 
-# Bot instance
-bot = Bot(token=TOKEN)
+# Bot instance (synchronous)
+bot = telegram.Bot(token=TOKEN)
 
 # Storage
 pending_orders = {}
 user_languages = {}
 user_states = {}
-payment_stats = {"total_requests": 0, "successful_payments": 0, "total_revenue": 0.0}
+
+# Set webhook
+try:
+    bot.set_webhook(url=f"{BASE_URL}/webhook")
+    logger.info(f"Webhook set to {BASE_URL}/webhook")
+except Exception as e:
+    logger.error(f"Failed to set webhook: {e}")
 
 # Translations
 texts = {
@@ -50,24 +52,24 @@ texts = {
         'language_selected': "🇬🇧 English language selected.",
         'check_imei': "🔍 Check IMEI",
         'help': "❓ Help",
-        'back': "🔙 Back",
         'enter_imei': "🔢 Please enter your 15-digit IMEI number.",
         'invalid_imei': "❌ Invalid IMEI. It must be 15 digits.",
         'payment_prompt': "📱 IMEI: {}\nTo receive your result, please complete payment:",
         'pay_button': "💳 Pay $0.32 USD",
-        'choose_language': "Please select your language / Пожалуйста, выберите ваш язык:"
+        'choose_language': "Please select your language / Пожалуйста, выберите ваш язык:",
+        'help_text': "📋 How to use:\n1. Send your 15-digit IMEI\n2. Click payment button\n3. Get your result\n\n⚠️ No refunds for wrong IMEI numbers!"
     },
     'ru': {
         'welcome': "👋 Добро пожаловать! Выберите опцию:",
         'language_selected': "🇷🇺 Выбран русский язык.",
         'check_imei': "🔍 Проверить IMEI",
         'help': "❓ Помощь",
-        'back': "🔙 Назад",
         'enter_imei': "🔢 Пожалуйста, введите ваш 15-значный номер IMEI.",
         'invalid_imei': "❌ Неверный IMEI. Он должен состоять из 15 цифр.",
         'payment_prompt': "📱 IMEI: {}\nЧтобы получить результат, пожалуйста, выполните оплату:",
         'pay_button': "💳 Оплатить $0.32 USD",
-        'choose_language': "Please select your language / Пожалуйста, выберите ваш язык:"
+        'choose_language': "Please select your language / Пожалуйста, выберите ваш язык:",
+        'help_text': "📋 Как использовать:\n1. Отправьте 15-значный IMEI\n2. Нажмите кнопку оплаты\n3. Получите результат\n\n⚠️ Возврат за неверный IMEI не предоставляется!"
     }
 }
 
@@ -76,73 +78,63 @@ def get_text(user_id, key, *args):
     text = texts.get(lang, texts['en']).get(key, key)
     return text.format(*args) if args else text
 
-def main_menu_keyboard(user_id):
-    return ReplyKeyboardMarkup([
-        [KeyboardButton(get_text(user_id, 'check_imei'))],
-        [KeyboardButton(get_text(user_id, 'help'))]
-    ], resize_keyboard=True)
+def send_message(chat_id, text, reply_markup=None, parse_mode=None):
+    try:
+        bot.send_message(
+            chat_id=chat_id,
+            text=text,
+            reply_markup=reply_markup,
+            parse_mode=parse_mode
+        )
+    except Exception as e:
+        logger.error(f"Failed to send message: {e}")
 
-def language_keyboard():
-    return InlineKeyboardMarkup([
+def handle_start(chat_id):
+    keyboard = telegram.InlineKeyboardMarkup([
         [
-            InlineKeyboardButton("🇬🇧 English", callback_data="lang_en"),
-            InlineKeyboardButton("🇷🇺 Русский", callback_data="lang_ru")
+            telegram.InlineKeyboardButton("🇬🇧 English", callback_data="lang_en"),
+            telegram.InlineKeyboardButton("🇷🇺 Русский", callback_data="lang_ru")
         ]
     ])
+    send_message(chat_id, texts['en']['choose_language'], reply_markup=keyboard)
 
-# Create application
-application = Application.builder().token(TOKEN).build()
+def handle_language_selection(chat_id, language):
+    user_languages[chat_id] = language
+    
+    keyboard = telegram.ReplyKeyboardMarkup([
+        [telegram.KeyboardButton(get_text(chat_id, 'check_imei'))],
+        [telegram.KeyboardButton(get_text(chat_id, 'help'))]
+    ], resize_keyboard=True)
+    
+    send_message(chat_id, get_text(chat_id, 'language_selected'))
+    send_message(chat_id, get_text(chat_id, 'welcome'), reply_markup=keyboard)
 
-# Handlers
-async def start(update: Update, context):
-    await update.message.reply_text(
-        get_text(update.effective_user.id, 'choose_language'),
-        reply_markup=language_keyboard()
-    )
-
-async def language_callback(update: Update, context):
-    query = update.callback_query
-    user_id = query.from_user.id
-    lang = query.data.split('_')[1]
-    
-    user_languages[user_id] = lang
-    
-    await query.answer()
-    await query.edit_message_text(text=get_text(user_id, 'language_selected'))
-    
-    await context.bot.send_message(
-        chat_id=user_id,
-        text=get_text(user_id, 'welcome'),
-        reply_markup=main_menu_keyboard(user_id)
-    )
-
-async def text_handler(update: Update, context):
-    user_id = update.effective_user.id
-    text = update.message.text
-    
-    if user_id not in user_languages:
-        await update.message.reply_text(
-            get_text(user_id, 'choose_language'),
-            reply_markup=language_keyboard()
-        )
+def handle_text(chat_id, text):
+    if chat_id not in user_languages:
+        handle_start(chat_id)
         return
     
-    if text == get_text(user_id, 'check_imei'):
-        user_states[user_id] = "awaiting_imei"
-        await update.message.reply_text(get_text(user_id, 'enter_imei'))
-    elif user_states.get(user_id) == "awaiting_imei":
+    if text == get_text(chat_id, 'check_imei'):
+        user_states[chat_id] = "awaiting_imei"
+        send_message(chat_id, get_text(chat_id, 'enter_imei'))
+    
+    elif text == get_text(chat_id, 'help'):
+        send_message(chat_id, get_text(chat_id, 'help_text'))
+    
+    elif user_states.get(chat_id) == "awaiting_imei":
         imei = text.strip()
         if not imei.isdigit() or len(imei) != 15:
-            await update.message.reply_text(
-                get_text(user_id, 'invalid_imei'),
-                reply_markup=main_menu_keyboard(user_id)
-            )
+            keyboard = telegram.ReplyKeyboardMarkup([
+                [telegram.KeyboardButton(get_text(chat_id, 'check_imei'))],
+                [telegram.KeyboardButton(get_text(chat_id, 'help'))]
+            ], resize_keyboard=True)
+            send_message(chat_id, get_text(chat_id, 'invalid_imei'), reply_markup=keyboard)
             return
         
         order_id = str(uuid.uuid4())
         pending_orders[order_id] = {
             'imei': imei,
-            'user_id': user_id,
+            'user_id': chat_id,
             'timestamp': datetime.now(),
             'status': 'pending'
         }
@@ -165,53 +157,45 @@ async def text_handler(update: Update, context):
         }
         
         payment_url = f"{PAYEER_PAYMENT_URL}?{urlencode(payment_data)}"
-        keyboard = InlineKeyboardMarkup([[
-            InlineKeyboardButton(get_text(user_id, 'pay_button'), url=payment_url)
+        keyboard = telegram.InlineKeyboardMarkup([[
+            telegram.InlineKeyboardButton(get_text(chat_id, 'pay_button'), url=payment_url)
         ]])
         
-        await update.message.reply_text(
-            get_text(user_id, 'payment_prompt', imei),
-            reply_markup=keyboard
-        )
-        
-        user_states[user_id] = None
+        send_message(chat_id, get_text(chat_id, 'payment_prompt', imei), reply_markup=keyboard)
+        user_states[chat_id] = None
 
-# Register handlers
-application.add_handler(CommandHandler("start", start))
-application.add_handler(CallbackQueryHandler(language_callback, pattern=r"^lang_"))
-application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler))
-
-# Initialize application
-async def init_app():
-    await application.initialize()
-    await bot.set_webhook(url=f"{BASE_URL}/webhook")
-    logger.info(f"Webhook set to {BASE_URL}/webhook")
-
-# Run initialization
-asyncio.run(init_app())
-
-# Flask routes
 @app.route("/")
 def home():
-    return {"status": "healthy", "timestamp": datetime.now().isoformat()}, 200
+    return {"status": "healthy", "bot": "running"}, 200
 
 @app.route("/webhook", methods=["POST"])
 def webhook():
     try:
-        update = Update.de_json(request.get_json(force=True), bot)
+        update = telegram.Update.de_json(request.get_json(force=True), bot)
         
-        # Process in background
-        def process():
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            loop.run_until_complete(application.process_update(update))
-            loop.close()
+        # Handle different update types
+        if update.message:
+            chat_id = update.message.chat_id
+            
+            if update.message.text:
+                if update.message.text.startswith('/start'):
+                    handle_start(chat_id)
+                else:
+                    handle_text(chat_id, update.message.text)
         
-        threading.Thread(target=process).start()
+        elif update.callback_query:
+            query = update.callback_query
+            chat_id = query.message.chat_id
+            
+            if query.data.startswith('lang_'):
+                language = query.data.split('_')[1]
+                handle_language_selection(chat_id, language)
+                bot.answer_callback_query(query.id)
+        
         return "OK"
     except Exception as e:
         logger.error(f"Webhook error: {e}")
-        return "Error", 500
+        return "OK"  # Return OK anyway to avoid retries
 
 @app.route("/payeer", methods=["POST"])
 def payeer_callback():
@@ -225,34 +209,33 @@ def payeer_callback():
             if order['status'] == 'pending':
                 order['status'] = 'paid'
                 
-                # Send result
-                def send_result():
-                    user_id = order['user_id']
-                    imei = order['imei']
-                    
-                    # Call IMEI API
-                    try:
-                        res = requests.get(IMEI_API_URL, params={
-                            "api_key": IMEI_API_KEY,
-                            "checker": "simlock2",
-                            "number": imei
-                        }, timeout=15)
-                        
-                        if res.status_code == 200:
-                            data = res.json()
-                            msg = "✅ Payment successful!\n\n📱 IMEI Info:\n"
-                            for key, value in data.items():
-                                if value and key != 'error':
-                                    msg += f"🔹 {key}: {value}\n"
-                        else:
-                            msg = "❌ IMEI not found or service error."
-                    except:
-                        msg = "❌ Service temporarily unavailable."
-                    
-                    # Send message
-                    asyncio.run(bot.send_message(chat_id=user_id, text=msg))
+                user_id = order['user_id']
+                imei = order['imei']
                 
-                threading.Thread(target=send_result).start()
+                # Call IMEI API
+                try:
+                    res = requests.get(IMEI_API_URL, params={
+                        "api_key": IMEI_API_KEY,
+                        "checker": "simlock2",
+                        "number": imei
+                    }, timeout=15)
+                    
+                    if res.status_code == 200:
+                        data = res.json()
+                        msg = "✅ Payment successful!\n\n📱 IMEI Info:\n"
+                        for key, value in data.items():
+                            if value and key != 'error':
+                                msg += f"🔹 {key}: {value}\n"
+                    else:
+                        msg = "❌ IMEI not found or service error."
+                except:
+                    msg = "❌ Service temporarily unavailable."
+                
+                send_message(user_id, msg)
+                
+                # Notify admins
+                for admin_id in ADMIN_IDS:
+                    send_message(admin_id, f"💰 Payment received!\nUser: {user_id}\nIMEI: {imei}")
         
         return order_id or "OK"
     except Exception as e:
@@ -263,9 +246,20 @@ def payeer_callback():
 def success():
     return """
     <html>
-    <body style="text-align:center; padding:50px; font-family:Arial;">
-        <h1 style="color:green;">✅ Payment Successful!</h1>
-        <p>Check your Telegram for the IMEI result.</p>
+    <head>
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <style>
+            body { text-align: center; padding: 50px; font-family: Arial; background: #f0f0f0; }
+            .container { background: white; padding: 30px; border-radius: 10px; max-width: 400px; margin: 0 auto; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+            h1 { color: #28a745; }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <h1>✅ Payment Successful!</h1>
+            <p>Check your Telegram for the IMEI result.</p>
+            <p>You can close this window.</p>
+        </div>
     </body>
     </html>
     """
@@ -274,9 +268,19 @@ def success():
 def fail():
     return """
     <html>
-    <body style="text-align:center; padding:50px; font-family:Arial;">
-        <h1 style="color:red;">❌ Payment Failed</h1>
-        <p>Please try again.</p>
+    <head>
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <style>
+            body { text-align: center; padding: 50px; font-family: Arial; background: #f0f0f0; }
+            .container { background: white; padding: 30px; border-radius: 10px; max-width: 400px; margin: 0 auto; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+            h1 { color: #dc3545; }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <h1>❌ Payment Failed</h1>
+            <p>Please return to Telegram and try again.</p>
+        </div>
     </body>
     </html>
     """
