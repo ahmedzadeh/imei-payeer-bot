@@ -54,7 +54,11 @@ texts = {
         'payment_prompt': "📱 IMEI: {}\nTo receive your result, please complete payment:",
         'pay_button': "💳 Pay $0.32 USD",
         'choose_language': "Please select your language / Пожалуйста, выберите ваш язык:",
-        'help_text': "📋 How to use:\n1. Send your 15-digit IMEI\n2. Click payment button\n3. Get your result\n\n⚠️ No refunds for wrong IMEI numbers!"
+        'help_text': "📋 How to use:\n1. Send your 15-digit IMEI\n2. Click payment button\n3. Get your result\n\n⚠️ No refunds for wrong IMEI numbers!",
+        'payment_successful': "✅ Payment successful!",
+        'imei_info': "📱 IMEI Info:",
+        'imei_not_found': "⚠️ IMEI not found in the database. Please ensure it is correct.",
+        'service_unavailable': "❌ Service temporarily unavailable. Please try again later."
     },
     'ru': {
         'welcome': "👋 Добро пожаловать! Выберите опцию:",
@@ -66,7 +70,11 @@ texts = {
         'payment_prompt': "📱 IMEI: {}\nЧтобы получить результат, пожалуйста, выполните оплату:",
         'pay_button': "💳 Оплатить $0.32 USD",
         'choose_language': "Please select your language / Пожалуйста, выберите ваш язык:",
-        'help_text': "📋 Как использовать:\n1. Отправьте 15-значный IMEI\n2. Нажмите кнопку оплаты\n3. Получите результат\n\n⚠️ Возврат за неверный IMEI не предоставляется!"
+        'help_text': "📋 Как использовать:\n1. Отправьте 15-значный IMEI\n2. Нажмите кнопку оплаты\n3. Получите результат\n\n⚠️ Возврат за неверный IMEI не предоставляется!",
+        'payment_successful': "✅ Оплата успешна!",
+        'imei_info': "📱 Информация об IMEI:",
+        'imei_not_found': "⚠️ IMEI не найден в базе данных. Пожалуйста, убедитесь, что он правильный.",
+        'service_unavailable': "❌ Сервис временно недоступен. Пожалуйста, попробуйте позже."
     }
 }
 
@@ -235,28 +243,65 @@ def payeer_callback():
                 
                 # Call IMEI API
                 try:
+                    logger.info(f"Calling IMEI API for: {imei}")
                     res = requests.get(IMEI_API_URL, params={
                         "api_key": IMEI_API_KEY,
                         "checker": "simlock2",
                         "number": imei
                     }, timeout=15)
                     
+                    logger.info(f"IMEI API response status: {res.status_code}")
+                    logger.info(f"IMEI API response: {res.text}")
+                    
                     if res.status_code == 200:
                         data = res.json()
-                        msg = "✅ Payment successful!\n\n📱 IMEI Info:\n"
-                        for key, value in data.items():
-                            if value and key != 'error':
-                                msg += f"🔹 {key}: {value}\n"
+                        
+                        # Check if there's an error in the response
+                        if 'error' in data:
+                            msg = f"{get_text(user_id, 'payment_successful')}\n\n{get_text(user_id, 'imei_not_found')}"
+                        else:
+                            # Build the message with available data
+                            msg = f"{get_text(user_id, 'payment_successful')}\n\n{get_text(user_id, 'imei_info')}\n"
+                            
+                            # Define the fields we want to show
+                            fields = [
+                                ('IMEI', '🔹 IMEI'),
+                                ('IMEI2', '🔹 IMEI2'),
+                                ('MEID', '🔹 MEID'),
+                                ('Serial Number', '🔹 Serial'),
+                                ('Description', '🔹 Model'),
+                                ('Date of purchase', '🔹 Purchase Date'),
+                                ('Repairs & Service Coverage', '🔹 Coverage'),
+                                ('is replaced', '🔹 Replaced'),
+                                ('SIM Lock', '🔹 SIM Lock')
+                            ]
+                            
+                            # Add each field if it exists
+                            has_data = False
+                            for api_key, display_name in fields:
+                                if api_key in data and data[api_key]:
+                                    msg += f"{display_name}: {data[api_key]}\n"
+                                    has_data = True
+                            
+                            # If no data was found
+                            if not has_data:
+                                msg = f"{get_text(user_id, 'payment_successful')}\n\n{get_text(user_id, 'imei_not_found')}"
                     else:
-                        msg = "❌ IMEI not found or service error."
-                except:
-                    msg = "❌ Service temporarily unavailable."
+                        msg = f"{get_text(user_id, 'payment_successful')}\n\n{get_text(user_id, 'service_unavailable')}"
+                        
+                except Exception as api_error:
+                    logger.error(f"IMEI API error: {api_error}")
+                    msg = f"{get_text(user_id, 'payment_successful')}\n\n{get_text(user_id, 'service_unavailable')}"
                 
+                # Send result to user
                 send_message(user_id, msg)
                 
                 # Notify admins
                 for admin_id in ADMIN_IDS:
-                    send_message(admin_id, f"💰 Payment received!\nUser: {user_id}\nIMEI: {imei}")
+                    admin_msg = f"💰 Payment received!\nUser: {user_id}\nIMEI: {imei}"
+                    if 'data' in locals() and isinstance(data, dict):
+                        admin_msg += f"\nAPI Response: {json.dumps(data, indent=2)}"
+                    send_message(admin_id, admin_msg)
         
         return order_id or "OK"
     except Exception as e:
