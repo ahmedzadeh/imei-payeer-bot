@@ -208,138 +208,93 @@ def handle_text(chat_id, text):
 
 def send_imei_result(user_id, imei):
     try:
-        # Try different API methods to find the correct one
         logger.info(f"Calling IMEI API for: {imei}")
         
-        # First, let's try with POST method which might be the correct way
-        api_data = {
+        # Use simlock3 checker as specified
+        params = {
             "api_key": IMEI_API_KEY,
-            "imei": imei,
-            "service": "1"  # Try with service ID
+            "checker": "simlock3",
+            "number": imei
         }
         
-        try:
-            res = requests.post("https://proimei.info/api", data=api_data, timeout=10)
-            logger.info(f"POST API response status: {res.status_code}")
-            logger.info(f"POST API response: {res.text}")
-            
-            if res.status_code == 200:
-                try:
-                    data = res.json()
-                except:
-                    data = {"response": res.text}
-                
-                if 'error' not in data or data.get('error') != 'Wrong Checker':
-                    # Success - process the response
-                    if 'error' in data:
-                        msg = f"{get_text(user_id, 'payment_successful')}\n\n{get_text(user_id, 'imei_not_found')}"
-                    else:
-                        msg = format_imei_response(user_id, data)
-                    
-                    send_message(user_id, msg, parse_mode="Markdown")
-                    notify_admins(user_id, imei)
-                    return
-        except requests.Timeout:
-            logger.warning("POST request timed out, trying GET method")
-        except Exception as e:
-            logger.error(f"POST request error: {e}")
+        # Make the API request
+        res = requests.get(IMEI_API_URL, params=params, timeout=15)
         
-        # If POST didn't work, try GET with different parameters
-        checkers_to_try = ['simlock', 'apple', '1', 'basic']
+        logger.info(f"API response status: {res.status_code}")
+        logger.info(f"API response: {res.text}")
         
-        for checker in checkers_to_try:
+        if res.status_code == 200:
             try:
-                logger.info(f"Trying GET with checker: {checker}")
-                params = {
-                    "api_key": IMEI_API_KEY,
-                    "checker": checker,
-                    "number": imei
-                }
+                data = res.json()
                 
-                res = requests.get(IMEI_API_URL, params=params, timeout=5)
+                # Check if there's an error in the response
+                if 'error' in data:
+                    msg = f"{get_text(user_id, 'payment_successful')}\n\n{get_text(user_id, 'imei_not_found')}"
+                else:
+                    # Format the successful response
+                    msg = f"*{get_text(user_id, 'payment_successful')}*\n\n"
+                    msg += f"*{get_text(user_id, 'imei_info')}*\n"
+                    
+                    # Display fields in order
+                    if 'IMEI' in data:
+                        msg += get_text(user_id, 'imei_field', data['IMEI']) + "\n"
+                    if 'IMEI2' in data:
+                        msg += get_text(user_id, 'imei2_field', data['IMEI2']) + "\n"
+                    if 'MEID' in data:
+                        msg += get_text(user_id, 'meid_field', data['MEID']) + "\n"
+                    if 'Serial Number' in data:
+                        msg += get_text(user_id, 'serial_field', data['Serial Number']) + "\n"
+                    if 'SIM Lock' in data:
+                        msg += get_text(user_id, 'simlock_field', data['SIM Lock']) + "\n"
+                    
+                    # Add any other fields that might be in the response
+                    other_fields = ['Model', 'Description', 'Color', 'Capacity']
+                    for field in other_fields:
+                        if field in data:
+                            msg += f"🔹 {field}: {data[field]}\n"
                 
-                if res.status_code == 200:
-                    try:
-                        data = res.json()
-                        logger.info(f"Response for checker {checker}: {data}")
-                        
-                        if 'error' not in data or data.get('error') != 'Wrong Checker':
-                            # Found working checker
-                            if 'error' in data:
-                                msg = f"{get_text(user_id, 'payment_successful')}\n\n{get_text(user_id, 'imei_not_found')}"
-                            else:
-                                msg = format_imei_response(user_id, data)
-                            
-                            send_message(user_id, msg, parse_mode="Markdown")
-                            notify_admins(user_id, imei)
-                            return
-                    except:
-                        continue
-            except requests.Timeout:
-                logger.warning(f"Timeout for checker: {checker}")
-                continue
-            except Exception as e:
-                logger.error(f"Error with checker {checker}: {e}")
-                continue
-        
-        # If all methods failed
+                send_message(user_id, msg, parse_mode="Markdown")
+                
+                # Notify admins with full response
+                notify_admins(user_id, imei, data)
+                
+            except json.JSONDecodeError:
+                logger.error("Failed to parse API response as JSON")
+                msg = f"{get_text(user_id, 'payment_successful')}\n\n{get_text(user_id, 'service_unavailable')}"
+                send_message(user_id, msg, parse_mode="Markdown")
+                notify_admins(user_id, imei, {"error": "Invalid JSON response", "raw": res.text})
+                
+        else:
+            logger.error(f"API returned status code: {res.status_code}")
+            msg = f"{get_text(user_id, 'payment_successful')}\n\n{get_text(user_id, 'service_unavailable')}"
+            send_message(user_id, msg, parse_mode="Markdown")
+            notify_admins(user_id, imei, {"error": f"Status code: {res.status_code}"})
+            
+    except requests.Timeout:
+        logger.error("API request timed out")
         msg = f"{get_text(user_id, 'payment_successful')}\n\n{get_text(user_id, 'service_unavailable')}"
         send_message(user_id, msg, parse_mode="Markdown")
-        notify_admins(user_id, imei)
+        notify_admins(user_id, imei, {"error": "Timeout"})
         
     except Exception as e:
         logger.error(f"IMEI API error: {e}")
         msg = f"{get_text(user_id, 'payment_successful')}\n\n{get_text(user_id, 'service_unavailable')}"
         send_message(user_id, msg, parse_mode="Markdown")
-        notify_admins(user_id, imei)
+        notify_admins(user_id, imei, {"error": str(e)})
 
-def format_imei_response(user_id, data):
-    """Format the IMEI API response into a readable message"""
-    msg = f"*{get_text(user_id, 'payment_successful')}*\n\n"
-    msg += f"*{get_text(user_id, 'imei_info')}*\n"
-    
-    # Map API response fields to display fields
-    field_mapping = {
-        'IMEI': 'imei_field',
-        'IMEI2': 'imei2_field',
-        'MEID': 'meid_field',
-        'Serial Number': 'serial_field',
-        'Serial': 'serial_field',  # Alternative field name
-        'Description': 'desc_field',
-        'Model': 'desc_field',  # Alternative field name
-        'Date of purchase': 'purchase_field',
-        'Purchase Date': 'purchase_field',  # Alternative field name
-        'Repairs & Service Coverage': 'coverage_field',
-        'Coverage': 'coverage_field',  # Alternative field name
-        'is replaced': 'replaced_field',
-        'Replaced': 'replaced_field',  # Alternative field name
-        'SIM Lock': 'simlock_field',
-        'SimLock': 'simlock_field',  # Alternative field name
-    }
-    
-    # Check if data is a string (might be plain text response)
-    if isinstance(data, str):
-        msg += data
-    elif isinstance(data, dict):
-        # Add fields in order
-        added_fields = False
-        for api_field, text_key in field_mapping.items():
-            if api_field in data and data[api_field]:
-                msg += get_text(user_id, text_key, data[api_field]) + "\n"
-                added_fields = True
-        
-        # If no recognized fields, show all available data
-        if not added_fields:
-            for key, value in data.items():
-                if value and key != 'error' and not key.startswith('_'):
-                    msg += f"🔹 {key}: {value}\n"
-    
-    return msg
-
-def notify_admins(user_id, imei):
-    """Notify admins about the payment"""
+def notify_admins(user_id, imei, api_response=None):
+    """Notify admins about the payment with API details"""
     for admin_id in ADMIN_IDS:
-        admin_msg = f"💰 Payment received!\nUser: {user_id}\nIMEI: {imei}"
+        admin_msg = f"💰 Payment received!\n"
+        admin_msg += f"User: {user_id}\n"
+        admin_msg += f"IMEI: {imei}\n"
+        
+        if api_response:
+            if isinstance(api_response, dict):
+                admin_msg += f"\nAPI Response:\n"
+                for key, value in api_response.items():
+                    admin_msg += f"{key}: {value}\n"
+        
         send_message(admin_id, admin_msg)
 
 @app.route("/")
