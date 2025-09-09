@@ -58,7 +58,16 @@ texts = {
         'payment_successful': "✅ Payment successful!",
         'imei_info': "📱 IMEI Info:",
         'imei_not_found': "⚠️ IMEI not found in the database. Please ensure it is correct.",
-        'service_unavailable': "❌ Service temporarily unavailable. Please try again later."
+        'service_unavailable': "❌ Service temporarily unavailable. Please try again later.",
+        'imei_field': "🔹 IMEI: {}",
+        'imei2_field': "🔹 IMEI2: {}",
+        'meid_field': "🔹 MEID: {}",
+        'serial_field': "🔹 Serial: {}",
+        'desc_field': "🔹 Desc: {}",
+        'purchase_field': "🔹 Purchase: {}",
+        'coverage_field': "🔹 Coverage: {}",
+        'replaced_field': "🔹 Replaced: {}",
+        'simlock_field': "🔹 SIM Lock: {}"
     },
     'ru': {
         'welcome': "👋 Добро пожаловать! Выберите опцию:",
@@ -74,7 +83,16 @@ texts = {
         'payment_successful': "✅ Оплата успешна!",
         'imei_info': "📱 Информация об IMEI:",
         'imei_not_found': "⚠️ IMEI не найден в базе данных. Пожалуйста, убедитесь, что он правильный.",
-        'service_unavailable': "❌ Сервис временно недоступен. Пожалуйста, попробуйте позже."
+        'service_unavailable': "❌ Сервис временно недоступен. Пожалуйста, попробуйте позже.",
+        'imei_field': "🔹 IMEI: {}",
+        'imei2_field': "🔹 IMEI2: {}",
+        'meid_field': "🔹 MEID: {}",
+        'serial_field': "🔹 Серийный номер: {}",
+        'desc_field': "🔹 Описание: {}",
+        'purchase_field': "🔹 Дата покупки: {}",
+        'coverage_field': "🔹 Гарантия: {}",
+        'replaced_field': "🔹 Заменен: {}",
+        'simlock_field': "🔹 SIM-блокировка: {}"
     }
 }
 
@@ -188,6 +206,77 @@ def handle_text(chat_id, text):
         send_message(chat_id, get_text(chat_id, 'payment_prompt', imei), reply_markup=keyboard)
         user_states[chat_id] = None
 
+def send_imei_result(user_id, imei):
+    try:
+        # Try different API methods to find the correct one
+        logger.info(f"Calling IMEI API for: {imei}")
+        
+        # Method 1: GET request with original parameters
+        params = {"api_key": IMEI_API_KEY, "checker": "simlock2", "number": imei}
+        res = requests.get(IMEI_API_URL, params=params, timeout=15)
+        
+        logger.info(f"API response status: {res.status_code}")
+        logger.info(f"API response: {res.text}")
+        
+        if res.status_code == 200:
+            try:
+                data = res.json()
+            except:
+                data = {"response": res.text}
+            
+            # If error, try alternative methods
+            if 'error' in data and data['error'] == 'Wrong Checker':
+                # Method 2: Try different checker values
+                for checker in ['simlock', 'apple', 'basic', '1', '2']:
+                    logger.info(f"Trying checker: {checker}")
+                    params = {"api_key": IMEI_API_KEY, "checker": checker, "number": imei}
+                    res = requests.get(IMEI_API_URL, params=params, timeout=15)
+                    
+                    if res.status_code == 200:
+                        try:
+                            data = res.json()
+                            if 'error' not in data:
+                                break
+                        except:
+                            continue
+            
+            # Process the response
+            if 'error' in data:
+                msg = f"{get_text(user_id, 'payment_successful')}\n\n{get_text(user_id, 'imei_not_found')}"
+            else:
+                msg = f"*{get_text(user_id, 'payment_successful')}*\n\n"
+                msg += f"*{get_text(user_id, 'imei_info')}*\n"
+                
+                # Map API response fields to display fields
+                field_mapping = {
+                    'IMEI': 'imei_field',
+                    'IMEI2': 'imei2_field',
+                    'MEID': 'meid_field',
+                    'Serial Number': 'serial_field',
+                    'Description': 'desc_field',
+                    'Date of purchase': 'purchase_field',
+                    'Repairs & Service Coverage': 'coverage_field',
+                    'is replaced': 'replaced_field',
+                    'SIM Lock': 'simlock_field'
+                }
+                
+                for api_field, text_key in field_mapping.items():
+                    if api_field in data and data[api_field]:
+                        msg += get_text(user_id, text_key, data[api_field]) + "\n"
+        else:
+            msg = f"{get_text(user_id, 'payment_successful')}\n\n{get_text(user_id, 'service_unavailable')}"
+            
+    except Exception as e:
+        logger.error(f"IMEI API error: {e}")
+        msg = f"{get_text(user_id, 'payment_successful')}\n\n{get_text(user_id, 'service_unavailable')}"
+    
+    send_message(user_id, msg, parse_mode="Markdown")
+    
+    # Notify admins
+    for admin_id in ADMIN_IDS:
+        admin_msg = f"💰 Payment received!\nUser: {user_id}\nIMEI: {imei}"
+        send_message(admin_id, admin_msg)
+
 @app.route("/")
 def home():
     return {"status": "healthy", "bot": "running"}, 200
@@ -241,108 +330,8 @@ def payeer_callback():
                 user_id = order['user_id']
                 imei = order['imei']
                 
-                # Call IMEI API - Using POST method
-                try:
-                    logger.info(f"Calling IMEI API for: {imei}")
-                    
-                    # Try different API endpoints/methods
-                    # Method 1: POST request with form data
-                    api_data = {
-                        "api_key": IMEI_API_KEY,
-                        "service": "1",  # Try service ID instead of checker name
-                        "imei": imei
-                    }
-                    
-                    res = requests.post(IMEI_API_URL, data=api_data, timeout=15)
-                    
-                    logger.info(f"IMEI API response status: {res.status_code}")
-                    logger.info(f"IMEI API response: {res.text}")
-                    
-                    if res.status_code == 200:
-                        try:
-                            data = res.json()
-                        except:
-                            # If response is not JSON, try to parse it as text
-                            data = {"response": res.text}
-                        
-                        # Check if there's an error in the response
-                        if 'error' in data:
-                            # Try alternative method
-                            logger.info("First method failed, trying alternative...")
-                            
-                            # Method 2: GET request with different parameters
-                            res2 = requests.get(IMEI_API_URL, params={
-                                "api_key": IMEI_API_KEY,
-                                "service": "simlock3",  # Try without the "2"
-                                "imei": imei
-                            }, timeout=15)
-                            
-                            logger.info(f"Alternative API response: {res2.text}")
-                            
-                            if res2.status_code == 200:
-                                try:
-                                    data = res2.json()
-                                except:
-                                    data = {"response": res2.text}
-                            
-                            # If still error, try one more time
-                            if 'error' in data:
-                                # Method 3: Different parameter names
-                                res3 = requests.post("https://proimei.info/api", data={
-                                    "key": IMEI_API_KEY,
-                                    "imei": imei,
-                                    "service": "apple"
-                                }, timeout=15)
-                                
-                                logger.info(f"Third attempt response: {res3.text}")
-                                
-                                if res3.status_code == 200:
-                                    try:
-                                        data = res3.json()
-                                    except:
-                                        data = {"response": res3.text}
-                        
-                        # Process the response
-                        if 'error' in data:
-                            msg = f"{get_text(user_id, 'payment_successful')}\n\n{get_text(user_id, 'imei_not_found')}\n\nAPI Error: {data.get('error', 'Unknown error')}"
-                        else:
-                            # Build the message with available data
-                            msg = f"{get_text(user_id, 'payment_successful')}\n\n{get_text(user_id, 'imei_info')}\n"
-                            
-                            # Try to extract data from various possible response formats
-                            if isinstance(data, dict):
-                                # Direct key-value pairs
-                                for key, value in data.items():
-                                    if value and key != 'error' and not key.startswith('_'):
-                                        msg += f"🔹 {key}: {value}\n"
-                            elif isinstance(data, str):
-                                # Plain text response
-                                msg += data
-                            else:
-                                msg += str(data)
-                            
-                            # If no meaningful data
-                            if len(msg.split('\n')) < 4:
-                                msg = f"{get_text(user_id, 'payment_successful')}\n\n{get_text(user_id, 'imei_not_found')}"
-                    else:
-                        msg = f"{get_text(user_id, 'payment_successful')}\n\n{get_text(user_id, 'service_unavailable')}\n\nStatus Code: {res.status_code}"
-                        
-                except Exception as api_error:
-                    logger.error(f"IMEI API error: {api_error}")
-                    msg = f"{get_text(user_id, 'payment_successful')}\n\n{get_text(user_id, 'service_unavailable')}\n\nError: {str(api_error)}"
-                
-                # Send result to user
-                send_message(user_id, msg)
-                
-                # Notify admins with full debug info
-                for admin_id in ADMIN_IDS:
-                    admin_msg = f"💰 Payment received!\nUser: {user_id}\nIMEI: {imei}\n\n"
-                    admin_msg += "API Debug Info:\n"
-                    admin_msg += f"API Key: {IMEI_API_KEY[:10]}...\n"
-                    admin_msg += f"API URL: {IMEI_API_URL}\n"
-                    if 'data' in locals():
-                        admin_msg += f"API Response: {json.dumps(data, indent=2)}"
-                    send_message(admin_id, admin_msg)
+                # Send IMEI result
+                send_imei_result(user_id, imei)
         
         return order_id or "OK"
     except Exception as e:
@@ -351,6 +340,13 @@ def payeer_callback():
 
 @app.route("/success")
 def success():
+    order_id = request.args.get("m_orderid")
+    if order_id and order_id in pending_orders:
+        order = pending_orders[order_id]
+        if order['status'] == 'pending':
+            order['status'] = 'paid'
+            send_imei_result(order['user_id'], order['imei'])
+    
     return """
     <html>
     <head>
