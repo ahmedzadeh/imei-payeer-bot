@@ -16,6 +16,7 @@ import time
 from psycopg2 import pool
 import json
 from datetime import datetime
+import sys
 
 # Logging setup
 logging.basicConfig(
@@ -25,26 +26,60 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Configuration
+# Railway Environment Configuration
+logger.info("Loading environment variables from Railway...")
+
 TOKEN = os.getenv("TOKEN")
 IMEI_API_KEY = os.getenv("IMEI_API_KEY")
 PAYEER_MERCHANT_ID = os.getenv("PAYEER_MERCHANT_ID")
 PAYEER_SECRET_KEY = os.getenv("PAYEER_SECRET_KEY")
 BASE_URL = os.getenv("BASE_URL")
+DATABASE_URL = os.getenv("DATABASE_URL")
 
+# Validate environment variables
+env_vars = {
+    "TOKEN": TOKEN,
+    "IMEI_API_KEY": IMEI_API_KEY,
+    "PAYEER_MERCHANT_ID": PAYEER_MERCHANT_ID,
+    "PAYEER_SECRET_KEY": PAYEER_SECRET_KEY,
+    "BASE_URL": BASE_URL,
+    "DATABASE_URL": DATABASE_URL
+}
+
+# Check for missing variables
+missing_vars = [name for name, value in env_vars.items() if not value]
+if missing_vars:
+    logger.error(f"FATAL: Missing environment variables: {', '.join(missing_vars)}")
+    logger.error("Please set these variables in Railway dashboard under Variables tab")
+    sys.exit(1)
+else:
+    logger.info("All environment variables loaded successfully")
+
+# Log non-sensitive configuration info
+logger.info(f"BASE_URL configured: {BASE_URL}")
+logger.info(f"Bot token loaded: {TOKEN[:10]}...")
+logger.info(f"Database URL loaded: {DATABASE_URL.split('@')[1] if '@' in DATABASE_URL else 'URL format unclear'}")
+
+# Constants
 IMEI_API_URL = "https://proimei.info/en/prepaid/api"
 PAYEER_PAYMENT_URL = "https://payeer.com/merchant/"
 PRICE = "0.32"
-
 ADMIN_IDS = {2103379072, 6927331058}
 
+# Flask app
 app = Flask(__name__)
 
-# Railway PostgreSQL connection
-DATABASE_URL = "postgresql://postgres:zTFbouZOdiuXYvmBvpTvLLkyJYOORSrN@maglev.proxy.rlwy.net:17420/railway"
-
-# Database connection pool
-connection_pool = pool.SimpleConnectionPool(1, 10, DATABASE_URL)
+# Database connection pool with Railway PostgreSQL
+try:
+    connection_pool = pool.SimpleConnectionPool(
+        1, 10, 
+        DATABASE_URL,
+        connect_timeout=10
+    )
+    logger.info("Database connection pool created successfully")
+except Exception as e:
+    logger.error(f"Failed to create database connection pool: {e}")
+    sys.exit(1)
 
 def get_db_connection():
     return connection_pool.getconn()
@@ -636,6 +671,44 @@ def register_handlers():
 
 register_handlers()
 
+# Flask routes
+@app.route("/")
+def home():
+    """Root endpoint for Railway health checks"""
+    return {
+        "status": "healthy",
+        "service": "IMEI Checker Bot",
+        "timestamp": datetime.now().isoformat()
+    }, 200
+
+@app.route("/health")
+def health_check():
+    """Detailed health check endpoint"""
+    health_status = {
+        "status": "healthy",
+        "checks": {
+            "database": False,
+            "telegram_webhook": False
+        }
+    }
+    
+    # Check database
+    try:
+        conn = get_db_connection()
+        with conn.cursor() as c:
+            c.execute("SELECT 1")
+        release_db_connection(conn)
+        health_status["checks"]["database"] = True
+    except Exception as e:
+        health_status["status"] = "unhealthy"
+        health_status["checks"]["database_error"] = str(e)
+    
+    # Check if webhook is set (basic check)
+    if TOKEN and BASE_URL:
+        health_status["checks"]["telegram_webhook"] = True
+    
+    status_code = 200 if health_status["status"] == "healthy" else 503
+    return health_status, status_code
 
 @app.route("/webhook", methods=["POST"])
 def telegram_webhook():
@@ -658,7 +731,6 @@ def telegram_webhook():
         logger.error(f"Error: {str(e)}")
         logger.error(traceback.format_exc())
         return "Error", 500
-
 
 @app.route("/payeer", methods=["POST"])
 def payeer_callback():
@@ -732,20 +804,6 @@ def fail():
         update_imei_check(order_id=order_id, flow_status='payment_page_failed')
     
     return render_template("fail.html", message="Payment was not completed")
-
-@app.route("/health")
-def health_check():
-    # Simple health check endpoint
-    try:
-        # Test database connection
-        conn = get_db_connection()
-        with conn.cursor() as c:
-            c.execute("SELECT 1")
-        release_db_connection(conn)
-        return "OK", 200
-    except Exception as e:
-        logger.error(f"Health check failed: {e}")
-        return "Service Unavailable", 503
 
 @app.route("/admin/dashboard")
 def admin_dashboard():
@@ -1140,16 +1198,41 @@ if __name__ == "__main__":
         # Import psycopg2.extras for JSON support
         import psycopg2.extras
         
+        logger.info("Starting Telegram bot on Railway...")
+        
+        # Test database connection
+        try:
+            test_conn = get_db_connection()
+            with test_conn.cursor() as cursor:
+                cursor.execute("SELECT 1")
+                logger.info("Database connection test successful")
+            release_db_connection(test_conn)
+        except Exception as e:
+            logger.error(f"Database connection test failed: {e}")
+            sys.exit(1)
+        
         # Set webhook
+        logger.info("Setting up Telegram webhook...")
         set_webhook()
         
-        # Start Flask app
-        app.run(host="0.0.0.0", port=8080)
-    except KeyboardInterrupt:
-        logger.info("Shutting down gracefully...")
-    except Exception as e:
-        logger.error(f"Startup error: {e}")
-        logger.error(traceback.format_exc())
-    finally:
-        shutdown_pool()
+        # Get port from Railway environment
+        port = int(os.environ.get("PORT", 8080))
+        logger.info(f"Starting Flask server on port {port}")
         
+        # Railway requires 0.0.0.0 to bind to all interfaces
+        app.run(
+            host="0.0.0.0", 
+            port=port,
+            debug=False  # Set to False in production
+        )
+        
+    except KeyboardInterrupt:
+        logger.info("Received interrupt signal, shutting down gracefully...")
+    except Exception as e:
+        logger.error(f"Fatal startup error: {e}")
+        logger.error(traceback.format_exc())
+        sys.exit(1)
+    finally:
+        logger.info("Cleaning up resources...")
+        shutdown_pool()
+        logger.info("Shutdown complete")
