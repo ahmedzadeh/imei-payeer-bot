@@ -241,66 +241,107 @@ def payeer_callback():
                 user_id = order['user_id']
                 imei = order['imei']
                 
-                # Call IMEI API
+                # Call IMEI API - Using POST method
                 try:
                     logger.info(f"Calling IMEI API for: {imei}")
-                    res = requests.get(IMEI_API_URL, params={
+                    
+                    # Try different API endpoints/methods
+                    # Method 1: POST request with form data
+                    api_data = {
                         "api_key": IMEI_API_KEY,
-                        "checker": "simlock2",
-                        "number": imei
-                    }, timeout=15)
+                        "service": "1",  # Try service ID instead of checker name
+                        "imei": imei
+                    }
+                    
+                    res = requests.post(IMEI_API_URL, data=api_data, timeout=15)
                     
                     logger.info(f"IMEI API response status: {res.status_code}")
                     logger.info(f"IMEI API response: {res.text}")
                     
                     if res.status_code == 200:
-                        data = res.json()
+                        try:
+                            data = res.json()
+                        except:
+                            # If response is not JSON, try to parse it as text
+                            data = {"response": res.text}
                         
                         # Check if there's an error in the response
                         if 'error' in data:
-                            msg = f"{get_text(user_id, 'payment_successful')}\n\n{get_text(user_id, 'imei_not_found')}"
+                            # Try alternative method
+                            logger.info("First method failed, trying alternative...")
+                            
+                            # Method 2: GET request with different parameters
+                            res2 = requests.get(IMEI_API_URL, params={
+                                "api_key": IMEI_API_KEY,
+                                "service": "simlock",  # Try without the "2"
+                                "imei": imei
+                            }, timeout=15)
+                            
+                            logger.info(f"Alternative API response: {res2.text}")
+                            
+                            if res2.status_code == 200:
+                                try:
+                                    data = res2.json()
+                                except:
+                                    data = {"response": res2.text}
+                            
+                            # If still error, try one more time
+                            if 'error' in data:
+                                # Method 3: Different parameter names
+                                res3 = requests.post("https://proimei.info/api", data={
+                                    "key": IMEI_API_KEY,
+                                    "imei": imei,
+                                    "service": "apple"
+                                }, timeout=15)
+                                
+                                logger.info(f"Third attempt response: {res3.text}")
+                                
+                                if res3.status_code == 200:
+                                    try:
+                                        data = res3.json()
+                                    except:
+                                        data = {"response": res3.text}
+                        
+                        # Process the response
+                        if 'error' in data:
+                            msg = f"{get_text(user_id, 'payment_successful')}\n\n{get_text(user_id, 'imei_not_found')}\n\nAPI Error: {data.get('error', 'Unknown error')}"
                         else:
                             # Build the message with available data
                             msg = f"{get_text(user_id, 'payment_successful')}\n\n{get_text(user_id, 'imei_info')}\n"
                             
-                            # Define the fields we want to show
-                            fields = [
-                                ('IMEI', '🔹 IMEI'),
-                                ('IMEI2', '🔹 IMEI2'),
-                                ('MEID', '🔹 MEID'),
-                                ('Serial Number', '🔹 Serial'),
-                                ('Description', '🔹 Model'),
-                                ('Date of purchase', '🔹 Purchase Date'),
-                                ('Repairs & Service Coverage', '🔹 Coverage'),
-                                ('is replaced', '🔹 Replaced'),
-                                ('SIM Lock', '🔹 SIM Lock')
-                            ]
+                            # Try to extract data from various possible response formats
+                            if isinstance(data, dict):
+                                # Direct key-value pairs
+                                for key, value in data.items():
+                                    if value and key != 'error' and not key.startswith('_'):
+                                        msg += f"🔹 {key}: {value}\n"
+                            elif isinstance(data, str):
+                                # Plain text response
+                                msg += data
+                            else:
+                                msg += str(data)
                             
-                            # Add each field if it exists
-                            has_data = False
-                            for api_key, display_name in fields:
-                                if api_key in data and data[api_key]:
-                                    msg += f"{display_name}: {data[api_key]}\n"
-                                    has_data = True
-                            
-                            # If no data was found
-                            if not has_data:
+                            # If no meaningful data
+                            if len(msg.split('\n')) < 4:
                                 msg = f"{get_text(user_id, 'payment_successful')}\n\n{get_text(user_id, 'imei_not_found')}"
                     else:
-                        msg = f"{get_text(user_id, 'payment_successful')}\n\n{get_text(user_id, 'service_unavailable')}"
+                        msg = f"{get_text(user_id, 'payment_successful')}\n\n{get_text(user_id, 'service_unavailable')}\n\nStatus Code: {res.status_code}"
                         
                 except Exception as api_error:
                     logger.error(f"IMEI API error: {api_error}")
-                    msg = f"{get_text(user_id, 'payment_successful')}\n\n{get_text(user_id, 'service_unavailable')}"
+                    msg = f"{get_text(user_id, 'payment_successful')}\n\n{get_text(user_id, 'service_unavailable')}\n\nError: {str(api_error)}"
                 
                 # Send result to user
                 send_message(user_id, msg)
                 
-                # Notify admins
+                # Notify admins with full debug info
                 for admin_id in ADMIN_IDS:
-                    admin_msg = f"💰 Payment received!\nUser: {user_id}\nIMEI: {imei}"
-                    if 'data' in locals() and isinstance(data, dict):
-                        admin_msg += f"\nAPI Response: {json.dumps(data, indent=2)}"
+                    admin_msg = f"💰 Payment received!\nUser: {user_id}\nIMEI: {imei}\n\n"
+                    admin_msg += "API Debug Info:\n"
+                    admin_msg += f"API Key: {IMEI_API_KEY[:10]}...\n"
+                    admin_msg += f"API URL: {IMEI_API_URL}\n"
+                    if 'data' in locals():
+                        admin_msg += f"API Response: {json.dumps(data, indent=2)}"
                     send_message(admin_id, admin_msg)
         
         return order_id or "OK"
