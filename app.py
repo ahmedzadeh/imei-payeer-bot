@@ -476,44 +476,6 @@ def health_check():
         "total_requests": payment_stats['total_requests']
     }, 200
 
-# Global variable to track initialization
-app_initialized = False
-
-@app.route("/webhook", methods=["POST"])
-def telegram_webhook():
-    try:
-        update_json = request.get_json(force=True)
-        logger.info(f"Received Telegram update: {update_json}")
-
-        update = Update.de_json(update_json, application.bot)
-
-        # Create a new event loop for this request
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-
-        async def handle():
-            global app_initialized
-            # Initialize only once
-            if not app_initialized:
-                await application.initialize()
-                app_initialized = True
-            await application.process_update(update)
-
-        try:
-            loop.run_until_complete(handle())
-        finally:
-            # Don't close the loop immediately
-            pending = asyncio.all_tasks(loop)
-            for task in pending:
-                task.cancel()
-            loop.stop()
-            
-        return "OK"
-    except Exception as e:
-        logger.error(f"Error: {str(e)}")
-        logger.error(traceback.format_exc())
-        return "Error", 500
-
 @app.route("/payeer", methods=["POST"])
 def payeer_callback():
     try:
@@ -607,7 +569,6 @@ def send_imei_result(user_id, imei, order_id):
 
         message_queue.put({
             'type': 'send_message',
-            'chat_id': user_id,
             'text': msg,
             'parse_mode': 'Markdown'
         })
@@ -629,18 +590,6 @@ def send_imei_result(user_id, imei, order_id):
             'chat_id': user_id,
             'text': get_text(user_id, 'unexpected_error')
         })
-
-async def set_webhook_async():
-    try:
-        webhook_url = f"{BASE_URL}/webhook"
-        await application.bot.set_webhook(url=webhook_url)
-        logger.info(f"Webhook set to {webhook_url}")
-    except Exception as e:
-        logger.error(f"Webhook Error: {str(e)}")
-        logger.error(traceback.format_exc())
-
-def set_webhook():
-    asyncio.run(set_webhook_async())
 
 # Create templates directory if it doesn't exist
 os.makedirs('templates', exist_ok=True)
@@ -702,26 +651,47 @@ if not os.path.exists('templates/fail.html'):
 </body>
 </html>''')
 
-# Initialize application once at startup
-async def initialize_app():
-    """Initialize the application once"""
-    global app_initialized
-    if not app_initialized:
-        await application.initialize()
-        app_initialized = True
+# Initialize bot and set webhook
+async def setup_bot():
+    """Initialize bot and set webhook"""
+    await application.initialize()
+    webhook_url = f"{BASE_URL}/webhook"
+    await application.bot.set_webhook(url=webhook_url)
+    logger.info(f"Webhook set to {webhook_url}")
+
+# Initialize bot before starting Flask
+try:
+    asyncio.run(setup_bot())
+except Exception as e:
+    logger.error(f"Bot setup error: {e}")
+    logger.error(traceback.format_exc())
+
+@app.route("/webhook", methods=["POST"])
+def telegram_webhook():
+    try:
+        update_json = request.get_json(force=True)
+        logger.info(f"Received Telegram update: {update_json}")
+
+        update = Update.de_json(update_json, application.bot)
+
+        # Process update in a new event loop
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        
+        try:
+            loop.run_until_complete(application.process_update(update))
+        finally:
+            loop.close()
+            
+        return "OK"
+    except Exception as e:
+        logger.error(f"Webhook error: {str(e)}")
+        logger.error(traceback.format_exc())
+        return "Error", 500
 
 if __name__ == "__main__":
     try:
         logger.info("Starting Telegram bot on Railway...")
-        
-        # Initialize the bot once at startup
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        loop.run_until_complete(initialize_app())
-        
-        # Set webhook
-        logger.info("Setting up Telegram webhook...")
-        set_webhook()
         
         # Get port from Railway environment
         port = int(os.environ.get("PORT", 8080))
@@ -731,7 +701,8 @@ if __name__ == "__main__":
         app.run(
             host="0.0.0.0", 
             port=port,
-            debug=False  # Set to False in production
+            debug=False,
+            use_reloader=False  # Important: disable reloader to prevent double initialization
         )
         
     except KeyboardInterrupt:
