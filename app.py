@@ -15,6 +15,7 @@ import time
 import json
 from datetime import datetime
 import sys
+from queue import Queue
 
 # Logging setup
 logging.basicConfig(
@@ -75,6 +76,9 @@ payment_stats = {
     "total_revenue": 0.0,
     "unique_users": set()
 }
+
+# Message queue for async operations
+message_queue = Queue()
 
 # Bot setup
 application = Application.builder().token(TOKEN).build()
@@ -248,6 +252,37 @@ def language_keyboard():
             InlineKeyboardButton("🇷🇺 Русский", callback_data="lang_ru")
         ]
     ])
+
+# Message processor for async operations
+def message_processor():
+    """Background thread to process messages"""
+    while True:
+        try:
+            task = message_queue.get()
+            if task is None:
+                break
+                
+            task_type = task.get('type')
+            
+            if task_type == 'send_message':
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                loop.run_until_complete(
+                    application.bot.send_message(
+                        chat_id=task['chat_id'],
+                        text=task['text'],
+                        parse_mode=task.get('parse_mode', None)
+                    )
+                )
+                loop.close()
+                
+        except Exception as e:
+            logger.error(f"Message processor error: {e}")
+            logger.error(traceback.format_exc())
+
+# Start the message processor thread
+processor_thread = threading.Thread(target=message_processor, daemon=True)
+processor_thread.start()
 
 # Handlers
 def register_handlers():
@@ -441,6 +476,9 @@ def health_check():
         "total_requests": payment_stats['total_requests']
     }, 200
 
+# Global variable to track initialization
+app_initialized = False
+
 @app.route("/webhook", methods=["POST"])
 def telegram_webhook():
     try:
@@ -449,14 +487,27 @@ def telegram_webhook():
 
         update = Update.de_json(update_json, application.bot)
 
+        # Create a new event loop for this request
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
 
         async def handle():
-            await application.initialize()
+            global app_initialized
+            # Initialize only once
+            if not app_initialized:
+                await application.initialize()
+                app_initialized = True
             await application.process_update(update)
 
-        loop.run_until_complete(handle())
+        try:
+            loop.run_until_complete(handle())
+        finally:
+            # Don't close the loop immediately
+            pending = asyncio.all_tasks(loop)
+            for task in pending:
+                task.cancel()
+            loop.stop()
+            
         return "OK"
     except Exception as e:
         logger.error(f"Error: {str(e)}")
@@ -529,17 +580,12 @@ def send_imei_result(user_id, imei, order_id):
         # More detailed error handling
         if res.status_code != 200:
             logger.error(f"API error: Status {res.status_code}, Response: {res.text}")
-            # Create new event loop for thread
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            loop.run_until_complete(
-                application.bot.send_message(
-                    chat_id=user_id, 
-                    text=get_text(user_id, 'service_unavailable'),
-                    parse_mode="Markdown"
-                )
-            )
-            loop.close()
+            message_queue.put({
+                'type': 'send_message',
+                'chat_id': user_id,
+                'text': get_text(user_id, 'service_unavailable'),
+                'parse_mode': 'Markdown'
+            })
             return
             
         data = res.json()
@@ -559,49 +605,30 @@ def send_imei_result(user_id, imei, order_id):
             msg += get_text(user_id, 'replaced_field', data.get('is replaced', 'N/A')) + "\n"
             msg += get_text(user_id, 'simlock_field', data.get('SIM Lock', 'N/A'))
 
-        # Create new event loop for thread
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        loop.run_until_complete(
-            application.bot.send_message(chat_id=user_id, text=msg, parse_mode="Markdown")
-        )
+        message_queue.put({
+            'type': 'send_message',
+            'chat_id': user_id,
+            'text': msg,
+            'parse_mode': 'Markdown'
+        })
         
         # Notify admins about successful payment
         admin_msg = f"💰 New payment received!\n👤 User ID: {user_id}\n📱 IMEI: {imei}"
         for admin_id in ADMIN_IDS:
-            try:
-                loop.run_until_complete(
-                    application.bot.send_message(chat_id=admin_id, text=admin_msg)
-                )
-            except Exception as admin_err:
-                logger.error(f"Failed to notify admin {admin_id}: {admin_err}")
-        
-        loop.close()
+            message_queue.put({
+                'type': 'send_message',
+                'chat_id': admin_id,
+                'text': admin_msg
+            })
                 
-    except requests.RequestException as e:
-        logger.error(f"API request error: {str(e)}")
-        error_msg = get_text(user_id, 'api_error')
-        # Create new event loop for thread
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        loop.run_until_complete(
-            application.bot.send_message(chat_id=user_id, text=error_msg)
-        )
-        loop.close()
     except Exception as e:
         logger.error(f"Sending result error: {str(e)}")
         logger.error(traceback.format_exc())
-        error_msg = get_text(user_id, 'unexpected_error')
-        try:
-            # Create new event loop for thread
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            loop.run_until_complete(
-                application.bot.send_message(chat_id=user_id, text=error_msg)
-            )
-            loop.close()
-        except:
-            logger.error(f"Failed to send error message to user {user_id}")
+        message_queue.put({
+            'type': 'send_message',
+            'chat_id': user_id,
+            'text': get_text(user_id, 'unexpected_error')
+        })
 
 async def set_webhook_async():
     try:
@@ -675,9 +702,22 @@ if not os.path.exists('templates/fail.html'):
 </body>
 </html>''')
 
+# Initialize application once at startup
+async def initialize_app():
+    """Initialize the application once"""
+    global app_initialized
+    if not app_initialized:
+        await application.initialize()
+        app_initialized = True
+
 if __name__ == "__main__":
     try:
         logger.info("Starting Telegram bot on Railway...")
+        
+        # Initialize the bot once at startup
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        loop.run_until_complete(initialize_app())
         
         # Set webhook
         logger.info("Setting up Telegram webhook...")
@@ -701,4 +741,6 @@ if __name__ == "__main__":
         logger.error(traceback.format_exc())
         sys.exit(1)
     finally:
+        # Signal message processor to stop
+        message_queue.put(None)
         logger.info("Shutdown complete")
