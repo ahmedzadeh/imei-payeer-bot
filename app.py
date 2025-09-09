@@ -1,4 +1,3 @@
-import psycopg2
 import requests
 from flask import Flask, request, render_template
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton
@@ -13,7 +12,6 @@ import logging
 import asyncio
 import traceback
 import time
-from psycopg2 import pool
 import json
 from datetime import datetime
 import sys
@@ -34,7 +32,6 @@ IMEI_API_KEY = os.getenv("IMEI_API_KEY")
 PAYEER_MERCHANT_ID = os.getenv("PAYEER_MERCHANT_ID")
 PAYEER_SECRET_KEY = os.getenv("PAYEER_SECRET_KEY")
 BASE_URL = os.getenv("BASE_URL")
-DATABASE_URL = os.getenv("DATABASE_URL")
 
 # Validate environment variables
 env_vars = {
@@ -42,8 +39,7 @@ env_vars = {
     "IMEI_API_KEY": IMEI_API_KEY,
     "PAYEER_MERCHANT_ID": PAYEER_MERCHANT_ID,
     "PAYEER_SECRET_KEY": PAYEER_SECRET_KEY,
-    "BASE_URL": BASE_URL,
-    "DATABASE_URL": DATABASE_URL
+    "BASE_URL": BASE_URL
 }
 
 # Check for missing variables
@@ -58,7 +54,6 @@ else:
 # Log non-sensitive configuration info
 logger.info(f"BASE_URL configured: {BASE_URL}")
 logger.info(f"Bot token loaded: {TOKEN[:10]}...")
-logger.info(f"Database URL loaded: {DATABASE_URL.split('@')[1] if '@' in DATABASE_URL else 'URL format unclear'}")
 
 # Constants
 IMEI_API_URL = "https://proimei.info/en/prepaid/api"
@@ -69,82 +64,20 @@ ADMIN_IDS = {2103379072, 6927331058}
 # Flask app
 app = Flask(__name__)
 
-# Database connection pool with Railway PostgreSQL
-try:
-    connection_pool = pool.SimpleConnectionPool(
-        1, 10, 
-        DATABASE_URL,
-        connect_timeout=10
-    )
-    logger.info("Database connection pool created successfully")
-except Exception as e:
-    logger.error(f"Failed to create database connection pool: {e}")
-    sys.exit(1)
-
-def get_db_connection():
-    return connection_pool.getconn()
-
-def release_db_connection(conn):
-    connection_pool.putconn(conn)
-
-# Database initialization
-def init_db():
-    conn = get_db_connection()
-    try:
-        with conn.cursor() as c:
-            # Create a more comprehensive imei_checks table
-            c.execute('''
-                CREATE TABLE IF NOT EXISTS imei_checks (
-                    id SERIAL PRIMARY KEY,
-                    order_id TEXT UNIQUE,
-                    imei TEXT NOT NULL,
-                    user_id BIGINT NOT NULL,
-                    username TEXT,
-                    first_name TEXT,
-                    last_name TEXT,
-                    check_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    imei_found BOOLEAN DEFAULT NULL,
-                    payment_status TEXT DEFAULT 'initiated',
-                    payment_amount TEXT,
-                    payment_currency TEXT DEFAULT 'USD',
-                    payeer_client_id TEXT,
-                    payeer_client_email TEXT,
-                    flow_status TEXT DEFAULT 'imei_submitted',
-                    api_response JSONB,
-                    notes TEXT
-                )
-            ''')
-            
-            # Create user_settings table for language preferences
-            c.execute('''
-                CREATE TABLE IF NOT EXISTS user_settings (
-                    user_id BIGINT PRIMARY KEY,
-                    language TEXT DEFAULT 'en',
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            ''')
-            
-            # Create an index for faster lookups
-            c.execute('CREATE INDEX IF NOT EXISTS idx_imei_checks_user_id ON imei_checks (user_id)')
-            c.execute('CREATE INDEX IF NOT EXISTS idx_imei_checks_imei ON imei_checks (imei)')
-            c.execute('CREATE INDEX IF NOT EXISTS idx_imei_checks_order_id ON imei_checks (order_id)')
-            
-            conn.commit()
-            logger.info("PostgreSQL Database initialized on Railway")
-    except Exception as e:
-        logger.error(f"Database initialization error: {e}")
-        conn.rollback()
-    finally:
-        release_db_connection(conn)
-
-# Initialize database
-init_db()
+# In-memory storage
+pending_orders = {}  # order_id -> {imei, user_id, timestamp, status}
+user_languages = {}  # user_id -> language
+user_states = {}
+user_request_times = {}
+payment_stats = {
+    "total_requests": 0,
+    "successful_payments": 0,
+    "total_revenue": 0.0,
+    "unique_users": set()
+}
 
 # Bot setup
 application = Application.builder().token(TOKEN).build()
-user_states = {}
-user_request_times = {}
 
 # Translations dictionary
 texts = {
@@ -238,7 +171,7 @@ texts = {
     }
 }
 
-# Rate limiting function
+# Helper functions
 def is_rate_limited(user_id, limit_seconds=5):
     current_time = time.time()
     if user_id in user_request_times:
@@ -247,62 +180,13 @@ def is_rate_limited(user_id, limit_seconds=5):
     user_request_times[user_id] = current_time
     return False
 
-# Check if user has language preference set
-def has_language_preference(user_id):
-    conn = get_db_connection()
-    try:
-        with conn.cursor() as c:
-            c.execute("SELECT language FROM user_settings WHERE user_id = %s", (user_id,))
-            result = c.fetchone()
-            return result is not None
-    except Exception as e:
-        logger.error(f"Error checking language preference: {e}")
-        return False
-    finally:
-        release_db_connection(conn)
-
-# Get user language preference
 def get_user_language(user_id):
-    conn = get_db_connection()
-    try:
-        with conn.cursor() as c:
-            c.execute("SELECT language FROM user_settings WHERE user_id = %s", (user_id,))
-            result = c.fetchone()
-            if result:
-                return result[0]
-            else:
-                # Default to English if no preference is set
-                return 'en'
-    except Exception as e:
-        logger.error(f"Error getting user language: {e}")
-        return 'en'  # Default to English on error
-    finally:
-        release_db_connection(conn)
+    return user_languages.get(user_id, 'en')
 
-# Set user language preference
 def set_user_language(user_id, language):
-    conn = get_db_connection()
-    try:
-        with conn.cursor() as c:
-            c.execute(
-                """
-                INSERT INTO user_settings (user_id, language, updated_at)
-                VALUES (%s, %s, NOW())
-                ON CONFLICT (user_id) 
-                DO UPDATE SET language = %s, updated_at = NOW()
-                """,
-                (user_id, language, language)
-            )
-            conn.commit()
-            return True
-    except Exception as e:
-        logger.error(f"Error setting user language: {e}")
-        conn.rollback()
-        return False
-    finally:
-        release_db_connection(conn)
+    user_languages[user_id] = language
+    return True
 
-# Get text in user's language
 def get_text(user_id, text_key, *args):
     lang = get_user_language(user_id)
     text = texts.get(lang, texts['en']).get(text_key, texts['en'].get(text_key, f"Missing text: {text_key}"))
@@ -311,119 +195,40 @@ def get_text(user_id, text_key, *args):
         return text.format(*args)
     return text
 
-# Update IMEI check record
-def update_imei_check(order_id=None, imei=None, user_id=None, **kwargs):
-    conn = get_db_connection()
-    try:
-        with conn.cursor() as c:
-            if order_id:
-                # Build the SET part of the query dynamically
-                set_parts = []
-                params = []
-                
-                for key, value in kwargs.items():
-                    set_parts.append(f"{key} = %s")
-                    params.append(value)
-                
-                if not set_parts:
-                    return False
-                
-                query = f"UPDATE imei_checks SET {', '.join(set_parts)} WHERE order_id = %s"
-                params.append(order_id)
-                
-                c.execute(query, params)
-                conn.commit()
-                return True
-            elif imei and user_id:
-                # Find the most recent check for this IMEI and user
-                c.execute(
-                    "SELECT order_id FROM imei_checks WHERE imei = %s AND user_id = %s ORDER BY check_time DESC LIMIT 1",
-                    (imei, user_id)
-                )
-                result = c.fetchone()
-                if result:
-                    order_id = result[0]
-                    return update_imei_check(order_id=order_id, **kwargs)
-            
-            return False
-    except Exception as e:
-        logger.error(f"Error updating IMEI check: {e}")
-        conn.rollback()
-        return False
-    finally:
-        release_db_connection(conn)
+def create_order(order_id, imei, user_id):
+    pending_orders[order_id] = {
+        'imei': imei,
+        'user_id': user_id,
+        'timestamp': datetime.now(),
+        'status': 'pending'
+    }
+    payment_stats['total_requests'] += 1
+    payment_stats['unique_users'].add(user_id)
+    return True
 
-# Create new IMEI check record
-def create_imei_check(order_id, imei, user_id, username=None, first_name=None, last_name=None):
-    conn = get_db_connection()
-    try:
-        with conn.cursor() as c:
-            c.execute(
-                """
-                INSERT INTO imei_checks 
-                (order_id, imei, user_id, username, first_name, last_name, payment_amount, flow_status) 
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-                """,
-                (order_id, imei, user_id, username, first_name, last_name, PRICE, 'imei_submitted')
-            )
-            conn.commit()
-            return True
-    except Exception as e:
-        logger.error(f"Error creating IMEI check: {e}")
-        conn.rollback()
-        return False
-    finally:
-        release_db_connection(conn)
+def process_payment(order_id):
+    if order_id in pending_orders:
+        order = pending_orders[order_id]
+        if order['status'] == 'paid':
+            return order['user_id'], order['imei'], True
+        
+        order['status'] = 'paid'
+        payment_stats['successful_payments'] += 1
+        payment_stats['total_revenue'] += float(PRICE)
+        return order['user_id'], order['imei'], False
+    
+    return None, None, False
 
-# Process payment function with enhanced tracking
-def process_payment(order_id, payeer_client_id=None, payeer_client_email=None):
-    conn = get_db_connection()
-    try:
-        with conn.cursor() as c:
-            # Get the current record
-            c.execute(
-                "SELECT user_id, imei, payment_status FROM imei_checks WHERE order_id = %s",
-                (order_id,)
-            )
-            row = c.fetchone()
-            if not row:
-                return None, None, False
-                
-            user_id, imei, payment_status = row
-            
-            # Check if already paid
-            if payment_status == 'paid':
-                return user_id, imei, True  # Already processed
-            
-            # Update payment information
-            update_data = {
-                'payment_status': 'paid',
-                'flow_status': 'payment_completed',
-                'payeer_client_id': payeer_client_id,
-                'payeer_client_email': payeer_client_email
-            }
-            
-            set_parts = []
-            params = []
-            
-            for key, value in update_data.items():
-                if value is not None:
-                    set_parts.append(f"{key} = %s")
-                    params.append(value)
-            
-            if set_parts:
-                query = f"UPDATE imei_checks SET {', '.join(set_parts)} WHERE order_id = %s"
-                params.append(order_id)
-                c.execute(query, params)
-                conn.commit()
-            
-            return user_id, imei, False  # Newly processed
-    except Exception as e:
-        logger.error(f"Payment processing error: {e}")
-        conn.rollback()
-        return None, None, False
-    finally:
-        release_db_connection(conn)
+# Cleanup old orders periodically
+def cleanup_old_orders():
+    current_time = datetime.now()
+    to_remove = []
+    for order_id, order in pending_orders.items():
+        if (current_time - order['timestamp']).total_seconds() > 86400:  # 24 hours
+            to_remove.append(order_id)
+    
+    for order_id in to_remove:
+        del pending_orders[order_id]
 
 # Main menu keyboard
 def main_menu_keyboard(user_id):
@@ -511,68 +316,21 @@ def register_handlers():
             await update.message.reply_text(get_text(user_id, 'not_authorized'))
             return
 
-        try:
-            conn = get_db_connection()
-            try:
-                with conn.cursor() as c:
-                    c.execute("SELECT COUNT(*) FROM imei_checks WHERE payment_status = 'paid'")
-                    total_paid = c.fetchone()[0]
+        # Clean up old orders first
+        cleanup_old_orders()
+        
+        msg = (
+            "📊 *Bot Usage Stats:*\n"
+            f"• Total IMEI checks: *{payment_stats['total_requests']}*\n"
+            f"• Successful payments: *{payment_stats['successful_payments']}*\n"
+            f"• Unique users: *{len(payment_stats['unique_users'])}*\n"
+            f"• Total revenue: *${payment_stats['total_revenue']:.2f} USD*\n\n"
+            f"• Active orders: *{len(pending_orders)}*\n"
+            f"• Languages: EN: *{sum(1 for l in user_languages.values() if l == 'en')}*, "
+            f"RU: *{sum(1 for l in user_languages.values() if l == 'ru')}*"
+        )
 
-                    c.execute("SELECT COUNT(*) FROM imei_checks")
-                    total_requests = c.fetchone()[0]
-
-                    c.execute("SELECT COUNT(DISTINCT user_id) FROM imei_checks")
-                    unique_users = c.fetchone()[0]
-                    
-                    c.execute("SELECT SUM(CAST(payment_amount AS DECIMAL)) FROM imei_checks WHERE payment_status = 'paid'")
-                    total_revenue = c.fetchone()[0] or 0
-                    
-                    c.execute("""
-                        SELECT DATE(check_time), COUNT(*) 
-                        FROM imei_checks 
-                        WHERE payment_status = 'paid' 
-                        GROUP BY DATE(check_time) 
-                        ORDER BY DATE(check_time) DESC 
-                        LIMIT 7
-                    """)
-                    daily_stats = c.fetchall()
-                    
-                    c.execute("""
-                        SELECT flow_status, COUNT(*) 
-                        FROM imei_checks 
-                        GROUP BY flow_status
-                    """)
-                    flow_stats = c.fetchall()
-                    
-                    c.execute("""
-                        SELECT language, COUNT(*) 
-                        FROM user_settings 
-                        GROUP BY language
-                    """)
-                    language_stats = c.fetchall()
-                    
-                    daily_report = "\n".join([f"• {date.strftime('%Y-%m-%d')}: {count} payments" for date, count in daily_stats])
-                    flow_report = "\n".join([f"• {status}: {count} users" for status, count in flow_stats])
-                    language_report = "\n".join([f"• {lang}: {count} users" for lang, count in language_stats])
-
-                msg = (
-                    "📊 *Bot Usage Stats:*\n"
-                    f"• Total IMEI checks: *{total_requests}*\n"
-                    f"• Successful payments: *{total_paid}*\n"
-                    f"• Unique users: *{unique_users}*\n"
-                    f"• Total revenue: *${total_revenue:.2f} USD*\n\n"
-                    f"📅 *Last 7 Days:*\n{daily_report}\n\n"
-                    f"🔄 *User Flow:*\n{flow_report}\n\n"
-                    f"🌐 *Language Stats:*\n{language_report}"
-                )
-
-                await update.message.reply_text(msg, parse_mode="Markdown")
-            finally:
-                release_db_connection(conn)
-        except Exception as e:
-            logger.error(f"/stats error: {e}")
-            logger.error(traceback.format_exc())
-            await update.message.reply_text("❌ Failed to load stats.")
+        await update.message.reply_text(msg, parse_mode="Markdown")
 
     async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = update.effective_user.id
@@ -585,7 +343,7 @@ def register_handlers():
             return
 
         # Check if user has language preference
-        if not has_language_preference(user_id):
+        if user_id not in user_languages:
             # If no language preference, show language selection
             await update.message.reply_text(
                 "Please select your language / Пожалуйста, выберите ваш язык:",
@@ -618,12 +376,7 @@ def register_handlers():
 
             order_id = str(uuid.uuid4())
             
-            # Create IMEI check record with user details
-            username = user.username
-            first_name = user.first_name
-            last_name = user.last_name
-
-            if create_imei_check(order_id, imei, user_id, username, first_name, last_name):
+            if create_order(order_id, imei, user_id):
                 desc = f"IMEI Check for {imei}"
                 m_desc = base64.b64encode(desc.encode()).decode()
                 sign_string = f"{PAYEER_MERCHANT_ID}:{order_id}:{PRICE}:USD:{m_desc}:{PAYEER_SECRET_KEY}"
@@ -648,9 +401,6 @@ def register_handlers():
                     get_text(user_id, 'payment_prompt', imei),
                     reply_markup=keyboard
                 )
-                
-                # Update flow status to payment_initiated
-                update_imei_check(order_id=order_id, flow_status='payment_initiated')
             else:
                 await update.message.reply_text("❌ An error occurred. Please try again later.")
                 
@@ -684,31 +434,12 @@ def home():
 @app.route("/health")
 def health_check():
     """Detailed health check endpoint"""
-    health_status = {
+    return {
         "status": "healthy",
-        "checks": {
-            "database": False,
-            "telegram_webhook": False
-        }
-    }
-    
-    # Check database
-    try:
-        conn = get_db_connection()
-        with conn.cursor() as c:
-            c.execute("SELECT 1")
-        release_db_connection(conn)
-        health_status["checks"]["database"] = True
-    except Exception as e:
-        health_status["status"] = "unhealthy"
-        health_status["checks"]["database_error"] = str(e)
-    
-    # Check if webhook is set (basic check)
-    if TOKEN and BASE_URL:
-        health_status["checks"]["telegram_webhook"] = True
-    
-    status_code = 200 if health_status["status"] == "healthy" else 503
-    return health_status, status_code
+        "service": "IMEI Checker Bot",
+        "active_orders": len(pending_orders),
+        "total_requests": payment_stats['total_requests']
+    }, 200
 
 @app.route("/webhook", methods=["POST"])
 def telegram_webhook():
@@ -750,20 +481,10 @@ def payeer_callback():
 
         order_id = form.get("m_orderid")
         if form.get("m_status") != "success":
-            # Update payment status to failed
-            update_imei_check(order_id=order_id, payment_status='failed', flow_status='payment_failed')
             logger.warning(f"Payment not successful for order {order_id}")
             return "Payment not successful", 400
 
-        # Extract Payeer client details if available
-        payeer_client_id = form.get("client_id", None)
-        payeer_client_email = form.get("client_email", None)
-        
-        user_id, imei, already_processed = process_payment(
-            order_id, 
-            payeer_client_id=payeer_client_id, 
-            payeer_client_email=payeer_client_email
-        )
+        user_id, imei, already_processed = process_payment(order_id)
         
         if user_id and imei and not already_processed:
             threading.Thread(target=send_imei_result, args=(user_id, imei, order_id)).start()
@@ -781,9 +502,6 @@ def success():
         return render_template("fail.html", message="Invalid order ID")
 
     try:
-        # Update flow status even if payment is not yet confirmed
-        update_imei_check(order_id=order_id, flow_status='payment_page_success')
-        
         # Try to process payment if not already processed
         user_id, imei, already_processed = process_payment(order_id)
         
@@ -798,64 +516,7 @@ def success():
 
 @app.route("/fail")
 def fail():
-    order_id = request.args.get("m_orderid")
-    if order_id:
-        # Update flow status to payment_page_failed
-        update_imei_check(order_id=order_id, flow_status='payment_page_failed')
-    
     return render_template("fail.html", message="Payment was not completed")
-
-@app.route("/admin/dashboard")
-def admin_dashboard():
-    # Simple admin dashboard - in a real app, add authentication
-    try:
-        conn = get_db_connection()
-        with conn.cursor() as c:
-            c.execute("SELECT COUNT(*) FROM imei_checks WHERE payment_status = 'paid'")
-            total_paid = c.fetchone()[0]
-
-            c.execute("SELECT COUNT(*) FROM imei_checks")
-            total_requests = c.fetchone()[0]
-
-            c.execute("SELECT COUNT(DISTINCT user_id) FROM imei_checks")
-            unique_users = c.fetchone()[0]
-            
-            c.execute("SELECT SUM(CAST(payment_amount AS DECIMAL)) FROM imei_checks WHERE payment_status = 'paid'")
-            total_revenue = c.fetchone()[0] or 0
-            
-            c.execute("""
-                SELECT 
-                    id, order_id, imei, user_id, username, check_time, 
-                    imei_found, payment_status, payment_amount, 
-                    payeer_client_id, payeer_client_email, flow_status
-                FROM imei_checks
-                ORDER BY check_time DESC
-                LIMIT 50
-            """)
-            recent_checks = c.fetchall()
-            
-            # Get language statistics
-            c.execute("""
-                SELECT language, COUNT(*) 
-                FROM user_settings 
-                GROUP BY language
-            """)
-            language_stats = c.fetchall()
-        
-        release_db_connection(conn)
-        
-        return render_template(
-            "admin_dashboard.html", 
-            total_paid=total_paid,
-            total_requests=total_requests,
-            unique_users=unique_users,
-            total_revenue=total_revenue,
-            recent_checks=recent_checks,
-            language_stats=language_stats
-        )
-    except Exception as e:
-        logger.error(f"Admin dashboard error: {e}")
-        return "Error loading dashboard", 500
 
 def send_imei_result(user_id, imei, order_id):
     try:
@@ -873,32 +534,12 @@ def send_imei_result(user_id, imei, order_id):
                 text=get_text(user_id, 'service_unavailable'),
                 parse_mode="Markdown"
             ))
-            
-            # Update database with API error
-            update_imei_check(
-                order_id=order_id, 
-                flow_status='api_error',
-                notes=f"API error: Status {res.status_code}"
-            )
             return
             
         data = res.json()
-        
-        # Store API response in database
-        update_imei_check(
-            order_id=order_id,
-            api_response=psycopg2.extras.Json(data)
-        )
 
         if 'error' in data or not any(value for key, value in data.items() if key != 'error'):
             msg = get_text(user_id, 'imei_not_found')
-            
-            # Update database with IMEI not found
-            update_imei_check(
-                order_id=order_id,
-                imei_found=False,
-                flow_status='imei_not_found'
-            )
         else:
             msg = f"*{get_text(user_id, 'payment_successful')}*\n\n"
             msg += f"*{get_text(user_id, 'imei_info')}*\n"
@@ -911,13 +552,6 @@ def send_imei_result(user_id, imei, order_id):
             msg += get_text(user_id, 'coverage_field', data.get('Repairs & Service Coverage', 'N/A')) + "\n"
             msg += get_text(user_id, 'replaced_field', data.get('is replaced', 'N/A')) + "\n"
             msg += get_text(user_id, 'simlock_field', data.get('SIM Lock', 'N/A'))
-            
-            # Update database with IMEI found
-            update_imei_check(
-                order_id=order_id,
-                imei_found=True,
-                flow_status='completed_successfully'
-            )
 
         asyncio.run(application.bot.send_message(chat_id=user_id, text=msg, parse_mode="Markdown"))
         
@@ -933,13 +567,6 @@ def send_imei_result(user_id, imei, order_id):
         logger.error(f"API request error: {str(e)}")
         error_msg = get_text(user_id, 'api_error')
         asyncio.run(application.bot.send_message(chat_id=user_id, text=error_msg))
-        
-        # Update database with API connection error
-        update_imei_check(
-            order_id=order_id,
-            flow_status='api_connection_error',
-            notes=str(e)
-        )
     except Exception as e:
         logger.error(f"Sending result error: {str(e)}")
         logger.error(traceback.format_exc())
@@ -948,13 +575,6 @@ def send_imei_result(user_id, imei, order_id):
             asyncio.run(application.bot.send_message(chat_id=user_id, text=error_msg))
         except:
             logger.error(f"Failed to send error message to user {user_id}")
-        
-        # Update database with unexpected error
-        update_imei_check(
-            order_id=order_id,
-            flow_status='unexpected_error',
-            notes=str(e)
-        )
 
 async def set_webhook_async():
     try:
@@ -967,12 +587,6 @@ async def set_webhook_async():
 
 def set_webhook():
     asyncio.run(set_webhook_async())
-
-# Graceful shutdown
-def shutdown_pool():
-    if connection_pool:
-        connection_pool.closeall()
-        logger.info("Database connection pool closed")
 
 # Create templates directory if it doesn't exist
 os.makedirs('templates', exist_ok=True)
@@ -1034,182 +648,9 @@ if not os.path.exists('templates/fail.html'):
 </body>
 </html>''')
 
-if not os.path.exists('templates/admin_dashboard.html'):
-    with open('templates/admin_dashboard.html', 'w') as f:
-        f.write('''<!DOCTYPE html>
-<html>
-<head>
-    <title>Admin Dashboard</title>
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <style>
-        body { font-family: Arial, sans-serif; padding: 20px; background-color: #f5f5f5; }
-        .container { max-width: 1200px; margin: 0 auto; background-color: white; padding: 20px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
-        h1 { color: #333; }
-        .stats { display: flex; flex-wrap: wrap; margin-bottom: 30px; }
-        .stat-card { flex: 1; min-width: 200px; background-color: #f8f9fa; margin: 10px; padding: 20px; border-radius: 5px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
-        .stat-value { font-size: 24px; font-weight: bold; color: #007bff; }
-        .stat-label { color: #6c757d; margin-top: 5px; }
-        table { width: 100%; border-collapse: collapse; margin-top: 20px; overflow-x: auto; display: block; }
-        th, td { padding: 12px 15px; text-align: left; border-bottom: 1px solid #ddd; }
-        th { background-color: #f8f9fa; color: #333; position: sticky; top: 0; }
-        tr:hover { background-color: #f1f1f1; }
-        .status { padding: 5px 10px; border-radius: 3px; font-size: 12px; }
-        .paid { background-color: #d4edda; color: #155724; }
-        .unpaid { background-color: #f8d7da; color: #721c24; }
-        .refresh { float: right; padding: 10px 15px; background-color: #007bff; color: white; text-decoration: none; border-radius: 5px; }
-        .flow-status { font-size: 12px; padding: 3px 6px; border-radius: 3px; background-color: #e9ecef; }
-        .completed { background-color: #d4edda; color: #155724; }
-        .error { background-color: #f8d7da; color: #721c24; }
-        .pending { background-color: #fff3cd; color: #856404; }
-        .timestamp { font-size: 12px; color: #6c757d; }
-        .search-box { margin: 20px 0; padding: 10px; width: 100%; border: 1px solid #ddd; border-radius: 5px; }
-        .language-stats { margin-top: 20px; }
-        .language-card { display: inline-block; padding: 10px 15px; margin: 5px; border-radius: 5px; background-color: #e9ecef; }
-        .language-en { background-color: #cce5ff; color: #004085; }
-        .language-ru { background-color: #d1ecf1; color: #0c5460; }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <h1>IMEI Checker Bot - Admin Dashboard</h1>
-        <a href="/admin/dashboard" class="refresh">Refresh</a>
-        
-        <div class="stats">
-            <div class="stat-card">
-                <div class="stat-value">{{ total_requests }}</div>
-                <div class="stat-label">Total Requests</div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-value">{{ total_paid }}</div>
-                <div class="stat-label">Successful Payments</div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-value">{{ unique_users }}</div>
-                <div class="stat-label">Unique Users</div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-value">${{ "%.2f"|format(total_revenue) }}</div>
-                <div class="stat-label">Total Revenue</div>
-            </div>
-        </div>
-        
-        <div class="language-stats">
-            <h2>Language Preferences</h2>
-            {% for lang, count in language_stats %}
-            <div class="language-card language-{{ lang }}">
-                {% if lang == 'en' %}🇬🇧 English{% elif lang == 'ru' %}🇷🇺 Russian{% else %}{{ lang }}{% endif %}: {{ count }} users
-            </div>
-            {% endfor %}
-        </div>
-        
-        <h2>Recent IMEI Checks</h2>
-        <input type="text" id="searchInput" class="search-box" placeholder="Search by IMEI, username, or user ID...">
-        
-        <table>
-            <thead>
-                <tr>
-                    <th>IMEI</th>
-                    <th>Time & Date</th>
-                    <th>User ID</th>
-                    <th>Username</th>
-                    <th>IMEI Found</th>
-                    <th>Payment Status</th>
-                    <th>Payeer Client</th>
-                    <th>Flow Status</th>
-                </tr>
-            </thead>
-            <tbody id="checksTable">
-                {% for check in recent_checks %}
-                <tr>
-                    <td>{{ check[2] }}</td>
-                    <td><span class="timestamp">{{ check[5].strftime('%Y-%m-%d %H:%M:%S') }}</span></td>
-                    <td>{{ check[3] }}</td>
-                    <td>{{ check[4] or 'N/A' }}</td>
-                    <td>
-                        {% if check[6] == True %}
-                        <span class="status paid">Found</span>
-                        {% elif check[6] == False %}
-                        <span class="status unpaid">Not Found</span>
-                        {% else %}
-                        <span class="status">Unknown</span>
-                        {% endif %}
-                    </td>
-                    <td>
-                        {% if check[7] == 'paid' %}
-                        <span class="status paid">Paid</span>
-                        {% elif check[7] == 'failed' %}
-                        <span class="status unpaid">Failed</span>
-                        {% else %}
-                        <span class="status">{{ check[7] }}</span>
-                        {% endif %}
-                    </td>
-                    <td>
-                        {% if check[9] %}
-                        ID: {{ check[9] }}<br>
-                        {% if check[10] %}
-                        Email: {{ check[10] }}
-                        {% endif %}
-                        {% else %}
-                        N/A
-                        {% endif %}
-                    </td>
-                    <td>
-                        {% if check[11] == 'completed_successfully' %}
-                        <span class="flow-status completed">Completed</span>
-                        {% elif check[11] in ['api_error', 'api_connection_error', 'unexpected_error'] %}
-                        <span class="flow-status error">{{ check[11] }}</span>
-                        {% elif check[11] in ['payment_initiated', 'payment_page_success'] %}
-                        <span class="flow-status pending">{{ check[11] }}</span>
-                        {% else %}
-                        <span class="flow-status">{{ check[11] }}</span>
-                        {% endif %}
-                    </td>
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
-    </div>
-    
-    <script>
-        // Simple search functionality
-        document.getElementById('searchInput').addEventListener('keyup', function() {
-            const searchValue = this.value.toLowerCase();
-            const table = document.getElementById('checksTable');
-            const rows = table.getElementsByTagName('tr');
-            
-            for (let i = 0; i < rows.length; i++) {
-                const imei = rows[i].cells[0].textContent.toLowerCase();
-                const userId = rows[i].cells[2].textContent.toLowerCase();
-                const username = rows[i].cells[3].textContent.toLowerCase();
-                
-                if (imei.includes(searchValue) || userId.includes(searchValue) || username.includes(searchValue)) {
-                    rows[i].style.display = '';
-                } else {
-                    rows[i].style.display = 'none';
-                }
-            }
-        });
-    </script>
-</body>
-</html>''')
-
 if __name__ == "__main__":
     try:
-        # Import psycopg2.extras for JSON support
-        import psycopg2.extras
-        
         logger.info("Starting Telegram bot on Railway...")
-        
-        # Test database connection
-        try:
-            test_conn = get_db_connection()
-            with test_conn.cursor() as cursor:
-                cursor.execute("SELECT 1")
-                logger.info("Database connection test successful")
-            release_db_connection(test_conn)
-        except Exception as e:
-            logger.error(f"Database connection test failed: {e}")
-            sys.exit(1)
         
         # Set webhook
         logger.info("Setting up Telegram webhook...")
@@ -1233,6 +674,4 @@ if __name__ == "__main__":
         logger.error(traceback.format_exc())
         sys.exit(1)
     finally:
-        logger.info("Cleaning up resources...")
-        shutdown_pool()
         logger.info("Shutdown complete")
