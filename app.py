@@ -58,16 +58,7 @@ texts = {
         'payment_successful': "✅ Payment successful!",
         'imei_info': "📱 IMEI Info:",
         'imei_not_found': "⚠️ IMEI not found in the database. Please ensure it is correct.",
-        'service_unavailable': "❌ Service temporarily unavailable. Please try again later.",
-        'imei_field': "🔹 IMEI: {}",
-        'imei2_field': "🔹 IMEI2: {}",
-        'meid_field': "🔹 MEID: {}",
-        'serial_field': "🔹 Serial: {}",
-        'desc_field': "🔹 Desc: {}",
-        'purchase_field': "🔹 Purchase: {}",
-        'coverage_field': "🔹 Coverage: {}",
-        'replaced_field': "🔹 Replaced: {}",
-        'simlock_field': "🔹 SIM Lock: {}"
+        'service_unavailable': "❌ Service temporarily unavailable. Please try again later."
     },
     'ru': {
         'welcome': "👋 Добро пожаловать! Выберите опцию:",
@@ -83,16 +74,7 @@ texts = {
         'payment_successful': "✅ Оплата успешна!",
         'imei_info': "📱 Информация об IMEI:",
         'imei_not_found': "⚠️ IMEI не найден в базе данных. Пожалуйста, убедитесь, что он правильный.",
-        'service_unavailable': "❌ Сервис временно недоступен. Пожалуйста, попробуйте позже.",
-        'imei_field': "🔹 IMEI: {}",
-        'imei2_field': "🔹 IMEI2: {}",
-        'meid_field': "🔹 MEID: {}",
-        'serial_field': "🔹 Серийный номер: {}",
-        'desc_field': "🔹 Описание: {}",
-        'purchase_field': "🔹 Дата покупки: {}",
-        'coverage_field': "🔹 Гарантия: {}",
-        'replaced_field': "🔹 Заменен: {}",
-        'simlock_field': "🔹 SIM-блокировка: {}"
+        'service_unavailable': "❌ Сервис временно недоступен. Пожалуйста, попробуйте позже."
     }
 }
 
@@ -229,57 +211,70 @@ def send_imei_result(user_id, imei):
                 
                 # Check if there's an error in the response
                 if 'error' in data:
-                    msg = f"{get_text(user_id, 'payment_successful')}\n\n{get_text(user_id, 'imei_not_found')}"
+                    msg = "✅ Payment successful!\n\n⚠️ IMEI not found in the database. Please ensure it is correct."
                 else:
-                    # Format the successful response
-                    msg = f"*{get_text(user_id, 'payment_successful')}*\n\n"
-                    msg += f"*{get_text(user_id, 'imei_info')}*\n"
+                    # Format the response exactly as requested
+                    msg = "✅ Payment successful!\n\n📱 IMEI Info:\n"
                     
-                    # Display fields in order
+                    # Define the exact order and format for fields
                     if 'IMEI' in data:
-                        msg += get_text(user_id, 'imei_field', data['IMEI']) + "\n"
+                        msg += f"🔹 IMEI: {data['IMEI']}\n"
                     if 'IMEI2' in data:
-                        msg += get_text(user_id, 'imei2_field', data['IMEI2']) + "\n"
+                        msg += f"🔹 IMEI2: {data['IMEI2']}\n"
                     if 'MEID' in data:
-                        msg += get_text(user_id, 'meid_field', data['MEID']) + "\n"
+                        msg += f"🔹 MEID: {data['MEID']}\n"
                     if 'Serial Number' in data:
-                        msg += get_text(user_id, 'serial_field', data['Serial Number']) + "\n"
+                        msg += f"🔹 Serial: {data['Serial Number']}\n"
+                    if 'Description' in data:
+                        msg += f"🔹 Desc: {data['Description']}\n"
+                    elif 'Model' in data:
+                        msg += f"🔹 Desc: {data['Model']}\n"
+                    if 'Date of purchase' in data:
+                        msg += f"🔹 Purchase: {data['Date of purchase']}\n"
+                    elif 'Purchase Date' in data:
+                        msg += f"🔹 Purchase: {data['Purchase Date']}\n"
+                    if 'Repairs & Service Coverage' in data:
+                        msg += f"🔹 Coverage: {data['Repairs & Service Coverage']}\n"
+                    elif 'Coverage' in data:
+                        msg += f"🔹 Coverage: {data['Coverage']}\n"
+                    elif 'Warranty' in data:
+                        msg += f"🔹 Coverage: {data['Warranty']}\n"
+                    if 'is replaced' in data:
+                        msg += f"🔹 Replaced: {data['is replaced']}\n"
+                    elif 'Replaced' in data:
+                        msg += f"🔹 Replaced: {data['Replaced']}\n"
                     if 'SIM Lock' in data:
-                        msg += get_text(user_id, 'simlock_field', data['SIM Lock']) + "\n"
-                    
-                    # Add any other fields that might be in the response
-                    other_fields = ['Model', 'Description', 'Color', 'Capacity']
-                    for field in other_fields:
-                        if field in data:
-                            msg += f"🔹 {field}: {data[field]}\n"
+                        msg += f"🔹 SIM Lock: {data['SIM Lock']}\n"
+                    elif 'SimLock' in data:
+                        msg += f"🔹 SIM Lock: {data['SimLock']}\n"
                 
-                send_message(user_id, msg, parse_mode="Markdown")
+                send_message(user_id, msg)
                 
                 # Notify admins with full response
                 notify_admins(user_id, imei, data)
                 
             except json.JSONDecodeError:
                 logger.error("Failed to parse API response as JSON")
-                msg = f"{get_text(user_id, 'payment_successful')}\n\n{get_text(user_id, 'service_unavailable')}"
-                send_message(user_id, msg, parse_mode="Markdown")
+                msg = "✅ Payment successful!\n\n❌ Service temporarily unavailable. Please try again later."
+                send_message(user_id, msg)
                 notify_admins(user_id, imei, {"error": "Invalid JSON response", "raw": res.text})
                 
         else:
             logger.error(f"API returned status code: {res.status_code}")
-            msg = f"{get_text(user_id, 'payment_successful')}\n\n{get_text(user_id, 'service_unavailable')}"
-            send_message(user_id, msg, parse_mode="Markdown")
+            msg = "✅ Payment successful!\n\n❌ Service temporarily unavailable. Please try again later."
+            send_message(user_id, msg)
             notify_admins(user_id, imei, {"error": f"Status code: {res.status_code}"})
             
     except requests.Timeout:
         logger.error("API request timed out")
-        msg = f"{get_text(user_id, 'payment_successful')}\n\n{get_text(user_id, 'service_unavailable')}"
-        send_message(user_id, msg, parse_mode="Markdown")
+        msg = "✅ Payment successful!\n\n❌ Service temporarily unavailable. Please try again later."
+        send_message(user_id, msg)
         notify_admins(user_id, imei, {"error": "Timeout"})
         
     except Exception as e:
         logger.error(f"IMEI API error: {e}")
-        msg = f"{get_text(user_id, 'payment_successful')}\n\n{get_text(user_id, 'service_unavailable')}"
-        send_message(user_id, msg, parse_mode="Markdown")
+        msg = "✅ Payment successful!\n\n❌ Service temporarily unavailable. Please try again later."
+        send_message(user_id, msg)
         notify_admins(user_id, imei, {"error": str(e)})
 
 def notify_admins(user_id, imei, api_response=None):
