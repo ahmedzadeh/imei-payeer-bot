@@ -54,17 +54,15 @@ texts = {
         'payment_prompt': "📱 IMEI: {}\nTo receive your result, please complete payment:",
         'pay_button': "💳 Pay $0.32 USD",
         'choose_language': "Please select your language / Пожалуйста, выберите ваш язык:",
-        'help_text': "📋 How to use:\n1. Send your 15-digit IMEI\n2. Click payment button\n3. Get your result\n\n⚠️ No refunds for wrong IMEI numbers!",
+        'help_text': "📋 How to use:\n1. Send your 15-digit IMEI\n2. Click payment button\n3. Get your result\n\n📱 *How to find IMEI:*\n• Dial *#06#\n• Settings → About phone → IMEI\n\n⚠️ No refunds for wrong IMEI numbers!",
         'payment_successful': "✅ Payment successful!",
         'imei_info': "📱 IMEI Info:",
         'imei_not_found': "⚠️ IMEI not found in the database. Please ensure it is correct.",
         'service_unavailable': "❌ Service temporarily unavailable. Please try again later.",
         'check_another': "🔍 Check another IMEI",
-        'how_to_find': "❓ How to find IMEI?",
-        'find_imei_text': "📱 *How to find IMEI:*\n• Dial *#06#\n• Settings → About phone → IMEI",
         'admin_payment_received': "💰 Payment received!",
         'admin_user': "User",
-        'admin_api_response': "API Response",   # <-- comma added
+        'admin_api_response': "API Response",
         'back': "🔙 Back",
         'use_menu': "❗ Please use the menu buttons below."
     },
@@ -78,17 +76,15 @@ texts = {
         'payment_prompt': "📱 IMEI: {}\nЧтобы получить результат, пожалуйста, выполните оплату:",
         'pay_button': "💳 Оплатить $0.32 USD",
         'choose_language': "Please select your language / Пожалуйста, выберите ваш язык:",
-        'help_text': "📋 Как использовать:\n1. Отправьте 15-значный IMEI\n2. Нажмите кнопку оплаты\n3. Получите результат\n\n⚠️ Возврат за неверный IMEI не предоставляется!",
+        'help_text': "📋 Как использовать:\n1. Отправьте 15-значный IMEI\n2. Нажмите кнопку оплаты\n3. Получите результат\n\n📱 *Как найти IMEI:*\n• Наберите *#06#\n• Настройки → О телефоне → IMEI\n\n⚠️ Возврат за неверный IMEI не предоставляется!",
         'payment_successful': "✅ Оплата успешна!",
         'imei_info': "📱 Информация об IMEI:",
         'imei_not_found': "⚠️ IMEI не найден в базе данных. Пожалуйста, убедитесь, что он правильный.",
         'service_unavailable': "❌ Сервис временно недоступен. Пожалуйста, попробуйте позже.",
         'check_another': "🔍 Проверить другой IMEI",
-        'how_to_find': "❓ Как найти IMEI?",
-        'find_imei_text': "📱 *Как найти IMEI:*\n• Наберите *#06#\n• Настройки → О телефоне → IMEI",
         'admin_payment_received': "💰 Платеж получен!",
         'admin_user': "Пользователь",
-        'admin_api_response': "Ответ API",      # <-- comma added
+        'admin_api_response': "Ответ API",
         'back': "🔙 Назад",
         'use_menu': "❗ Пожалуйста, используйте кнопки меню ниже."
     }
@@ -178,7 +174,6 @@ def quick_action_keyboard(user_id):
     return {
         "keyboard": [
             [{"text": get_text(user_id, 'check_another')}],
-            [{"text": get_text(user_id, 'how_to_find')}],
             [{"text": get_text(user_id, 'back')}]
         ],
         "resize_keyboard": True
@@ -195,20 +190,7 @@ def handle_text(chat_id, text):
         send_message(chat_id, get_text(chat_id, 'enter_imei'))
     
     elif text == get_text(chat_id, 'help'):
-        send_message(chat_id, get_text(chat_id, 'help_text'))
-    
-    elif text == get_text(chat_id, 'how_to_find'):
-        # Send how to find IMEI message with back to main menu
-        keyboard = {
-            "keyboard": [
-                [{"text": get_text(chat_id, 'check_imei')}],
-                [{"text": get_text(chat_id, 'help')}]
-            ],
-            "resize_keyboard": True
-        }
-        send_message(chat_id, get_text(chat_id, 'find_imei_text'), 
-                    reply_markup=keyboard, 
-                    parse_mode="Markdown")
+        send_message(chat_id, get_text(chat_id, 'help_text'), parse_mode="Markdown")
     
     elif text == get_text(chat_id, 'back'):
         # Go back to main menu
