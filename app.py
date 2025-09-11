@@ -174,7 +174,8 @@ def quick_action_keyboard(user_id):
     return {
         "keyboard": [
             [{"text": get_text(user_id, 'check_another')}],
-            [{"text": get_text(user_id, 'how_to_find')}]
+            [{"text": get_text(user_id, 'how_to_find')}],
+            [{"text": get_text(user_id, 'back')}]
         ],
         "resize_keyboard": True
     }
@@ -184,6 +185,7 @@ def handle_text(chat_id, text):
         handle_start(chat_id)
         return
     
+    # Handle all button texts
     if text == get_text(chat_id, 'check_imei') or text == get_text(chat_id, 'check_another'):
         user_states[chat_id] = "awaiting_imei"
         send_message(chat_id, get_text(chat_id, 'enter_imei'))
@@ -192,7 +194,29 @@ def handle_text(chat_id, text):
         send_message(chat_id, get_text(chat_id, 'help_text'))
     
     elif text == get_text(chat_id, 'how_to_find'):
-        send_message(chat_id, get_text(chat_id, 'find_imei_text'), parse_mode="Markdown")
+        # Send how to find IMEI message with back to main menu
+        keyboard = {
+            "keyboard": [
+                [{"text": get_text(chat_id, 'check_imei')}],
+                [{"text": get_text(chat_id, 'help')}]
+            ],
+            "resize_keyboard": True
+        }
+        send_message(chat_id, get_text(chat_id, 'find_imei_text'), 
+                    reply_markup=keyboard, 
+                    parse_mode="Markdown")
+    
+    elif text == get_text(chat_id, 'back'):
+        # Go back to main menu
+        keyboard = {
+            "keyboard": [
+                [{"text": get_text(chat_id, 'check_imei')}],
+                [{"text": get_text(chat_id, 'help')}]
+            ],
+            "resize_keyboard": True
+        }
+        send_message(chat_id, get_text(chat_id, 'welcome'), 
+                    reply_markup=keyboard)
     
     elif user_states.get(chat_id) == "awaiting_imei":
         imei = text.strip()
@@ -241,6 +265,17 @@ def handle_text(chat_id, text):
         
         send_message(chat_id, get_text(chat_id, 'payment_prompt', imei), reply_markup=keyboard)
         user_states[chat_id] = None
+    else:
+        # If text doesn't match any button, show main menu
+        keyboard = {
+            "keyboard": [
+                [{"text": get_text(chat_id, 'check_imei')}],
+                [{"text": get_text(chat_id, 'help')}]
+            ],
+            "resize_keyboard": True
+        }
+        send_message(chat_id, get_text(chat_id, 'use_menu'), 
+                    reply_markup=keyboard)
 
 def send_imei_result(user_id, imei):
     try:
