@@ -64,7 +64,7 @@ texts = {
         'find_imei_text': "📱 *How to find IMEI:*\n• Dial *#06#\n• Settings → About phone → IMEI",
         'admin_payment_received': "💰 Payment received!",
         'admin_user': "User",
-        'admin_api_response': "API Response"
+        'admin_api_response': "API Response",   # <-- comma added
         'back': "🔙 Back",
         'use_menu': "❗ Please use the menu buttons below."
     },
@@ -88,7 +88,7 @@ texts = {
         'find_imei_text': "📱 *Как найти IMEI:*\n• Наберите *#06#\n• Настройки → О телефоне → IMEI",
         'admin_payment_received': "💰 Платеж получен!",
         'admin_user': "Пользователь",
-        'admin_api_response': "Ответ API"
+        'admin_api_response': "Ответ API",      # <-- comma added
         'back': "🔙 Назад",
         'use_menu': "❗ Пожалуйста, используйте кнопки меню ниже."
     }
