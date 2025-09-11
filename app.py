@@ -65,6 +65,8 @@ texts = {
         'admin_payment_received': "💰 Payment received!",
         'admin_user': "User",
         'admin_api_response': "API Response"
+        'back': "🔙 Back",
+        'use_menu': "❗ Please use the menu buttons below."
     },
     'ru': {
         'welcome': "👋 Добро пожаловать! Выберите опцию:",
@@ -87,6 +89,8 @@ texts = {
         'admin_payment_received': "💰 Платеж получен!",
         'admin_user': "Пользователь",
         'admin_api_response': "Ответ API"
+        'back': "🔙 Назад",
+        'use_menu': "❗ Пожалуйста, используйте кнопки меню ниже."
     }
 }
 
