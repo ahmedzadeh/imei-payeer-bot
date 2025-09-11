@@ -58,7 +58,13 @@ texts = {
         'payment_successful': "✅ Payment successful!",
         'imei_info': "📱 IMEI Info:",
         'imei_not_found': "⚠️ IMEI not found in the database. Please ensure it is correct.",
-        'service_unavailable': "❌ Service temporarily unavailable. Please try again later."
+        'service_unavailable': "❌ Service temporarily unavailable. Please try again later.",
+        'check_another': "🔍 Check another IMEI",
+        'how_to_find': "❓ How to find IMEI?",
+        'find_imei_text': "📱 *How to find IMEI:*\n• Dial *#06#\n• Settings → About phone → IMEI",
+        'admin_payment_received': "💰 Payment received!",
+        'admin_user': "User",
+        'admin_api_response': "API Response"
     },
     'ru': {
         'welcome': "👋 Добро пожаловать! Выберите опцию:",
@@ -74,7 +80,39 @@ texts = {
         'payment_successful': "✅ Оплата успешна!",
         'imei_info': "📱 Информация об IMEI:",
         'imei_not_found': "⚠️ IMEI не найден в базе данных. Пожалуйста, убедитесь, что он правильный.",
-        'service_unavailable': "❌ Сервис временно недоступен. Пожалуйста, попробуйте позже."
+        'service_unavailable': "❌ Сервис временно недоступен. Пожалуйста, попробуйте позже.",
+        'check_another': "🔍 Проверить другой IMEI",
+        'how_to_find': "❓ Как найти IMEI?",
+        'find_imei_text': "📱 *Как найти IMEI:*\n• Наберите *#06#\n• Настройки → О телефоне → IMEI",
+        'admin_payment_received': "💰 Платеж получен!",
+        'admin_user': "Пользователь",
+        'admin_api_response': "Ответ API"
+    }
+}
+
+# Field labels for IMEI results
+field_labels = {
+    'en': {
+        'imei': "*IMEI:*",
+        'imei2': "*IMEI2:*",
+        'meid': "*MEID:*",
+        'serial': "*Serial:*",
+        'desc': "*Desc:*",
+        'purchase': "*Purchase:*",
+        'coverage': "*Coverage:*",
+        'replaced': "*Replaced:*",
+        'simlock': "*SIM Lock:*"
+    },
+    'ru': {
+        'imei': "*IMEI:*",
+        'imei2': "*IMEI2:*",
+        'meid': "*MEID:*",
+        'serial': "*Серийный номер:*",
+        'desc': "*Описание:*",
+        'purchase': "*Дата покупки:*",
+        'coverage': "*Гарантия:*",
+        'replaced': "*Заменен:*",
+        'simlock': "*SIM-блокировка:*"
     }
 }
 
@@ -82,6 +120,10 @@ def get_text(user_id, key, *args):
     lang = user_languages.get(user_id, 'en')
     text = texts.get(lang, texts['en']).get(key, key)
     return text.format(*args) if args else text
+
+def get_field_label(user_id, field):
+    lang = user_languages.get(user_id, 'en')
+    return field_labels.get(lang, field_labels['en']).get(field, field)
 
 def send_message(chat_id, text, reply_markup=None, parse_mode=None):
     try:
@@ -128,17 +170,29 @@ def handle_language_selection(chat_id, language):
     send_message(chat_id, get_text(chat_id, 'language_selected'))
     send_message(chat_id, get_text(chat_id, 'welcome'), reply_markup=keyboard)
 
+def quick_action_keyboard(user_id):
+    return {
+        "keyboard": [
+            [{"text": get_text(user_id, 'check_another')}],
+            [{"text": get_text(user_id, 'how_to_find')}]
+        ],
+        "resize_keyboard": True
+    }
+
 def handle_text(chat_id, text):
     if chat_id not in user_languages:
         handle_start(chat_id)
         return
     
-    if text == get_text(chat_id, 'check_imei'):
+    if text == get_text(chat_id, 'check_imei') or text == get_text(chat_id, 'check_another'):
         user_states[chat_id] = "awaiting_imei"
         send_message(chat_id, get_text(chat_id, 'enter_imei'))
     
     elif text == get_text(chat_id, 'help'):
         send_message(chat_id, get_text(chat_id, 'help_text'))
+    
+    elif text == get_text(chat_id, 'how_to_find'):
+        send_message(chat_id, get_text(chat_id, 'find_imei_text'), parse_mode="Markdown")
     
     elif user_states.get(chat_id) == "awaiting_imei":
         imei = text.strip()
@@ -211,82 +265,84 @@ def send_imei_result(user_id, imei):
                 
                 # Check if there's an error in the response
                 if 'error' in data:
-                    msg = "✅ Payment successful!\n\n⚠️ IMEI not found in the database. Please ensure it is correct."
+                    msg = f"{get_text(user_id, 'payment_successful')}\n\n{get_text(user_id, 'imei_not_found')}"
+                    send_message(user_id, msg, reply_markup=quick_action_keyboard(user_id))
                 else:
-                    # Format the response exactly as requested
-                    msg = "✅ Payment successful!\n\n📱 IMEI Info:\n"
+                    # Format the response with proper language and markdown
+                    msg = f"*{get_text(user_id, 'payment_successful')}*\n\n*{get_text(user_id, 'imei_info')}*\n"
                     
                     # Define the exact order and format for fields
                     if 'IMEI' in data:
-                        msg += f"🔹 IMEI: {data['IMEI']}\n"
+                        msg += f"🔹 {get_field_label(user_id, 'imei')} `{data['IMEI']}`\n"
                     if 'IMEI2' in data:
-                        msg += f"🔹 IMEI2: {data['IMEI2']}\n"
+                        msg += f"🔹 {get_field_label(user_id, 'imei2')} `{data['IMEI2']}`\n"
                     if 'MEID' in data:
-                        msg += f"🔹 MEID: {data['MEID']}\n"
+                        msg += f"🔹 {get_field_label(user_id, 'meid')} `{data['MEID']}`\n"
                     if 'Serial Number' in data:
-                        msg += f"🔹 Serial: {data['Serial Number']}\n"
+                        msg += f"🔹 {get_field_label(user_id, 'serial')} `{data['Serial Number']}`\n"
                     if 'Description' in data:
-                        msg += f"🔹 Desc: {data['Description']}\n"
+                        msg += f"🔹 {get_field_label(user_id, 'desc')} `{data['Description']}`\n"
                     elif 'Model' in data:
-                        msg += f"🔹 Desc: {data['Model']}\n"
+                        msg += f"🔹 {get_field_label(user_id, 'desc')} `{data['Model']}`\n"
                     if 'Date of purchase' in data:
-                        msg += f"🔹 Purchase: {data['Date of purchase']}\n"
+                        msg += f"🔹 {get_field_label(user_id, 'purchase')} `{data['Date of purchase']}`\n"
                     elif 'Purchase Date' in data:
-                        msg += f"🔹 Purchase: {data['Purchase Date']}\n"
+                        msg += f"🔹 {get_field_label(user_id, 'purchase')} `{data['Purchase Date']}`\n"
                     if 'Repairs & Service Coverage' in data:
-                        msg += f"🔹 Coverage: {data['Repairs & Service Coverage']}\n"
+                        msg += f"🔹 {get_field_label(user_id, 'coverage')} `{data['Repairs & Service Coverage']}`\n"
                     elif 'Coverage' in data:
-                        msg += f"🔹 Coverage: {data['Coverage']}\n"
+                        msg += f"🔹 {get_field_label(user_id, 'coverage')} `{data['Coverage']}`\n"
                     elif 'Warranty' in data:
-                        msg += f"🔹 Coverage: {data['Warranty']}\n"
+                        msg += f"🔹 {get_field_label(user_id, 'coverage')} `{data['Warranty']}`\n"
                     if 'is replaced' in data:
-                        msg += f"🔹 Replaced: {data['is replaced']}\n"
+                        msg += f"🔹 {get_field_label(user_id, 'replaced')} `{data['is replaced']}`\n"
                     elif 'Replaced' in data:
-                        msg += f"🔹 Replaced: {data['Replaced']}\n"
+                        msg += f"🔹 {get_field_label(user_id, 'replaced')} `{data['Replaced']}`\n"
                     if 'SIM Lock' in data:
-                        msg += f"🔹 SIM Lock: {data['SIM Lock']}\n"
+                        msg += f"🔹 {get_field_label(user_id, 'simlock')} `{data['SIM Lock']}`\n"
                     elif 'SimLock' in data:
-                        msg += f"🔹 SIM Lock: {data['SimLock']}\n"
+                        msg += f"🔹 {get_field_label(user_id, 'simlock')} `{data['SimLock']}`\n"
                 
-                send_message(user_id, msg)
+                    send_message(user_id, msg, reply_markup=quick_action_keyboard(user_id), parse_mode="Markdown")
                 
                 # Notify admins with full response
                 notify_admins(user_id, imei, data)
                 
             except json.JSONDecodeError:
                 logger.error("Failed to parse API response as JSON")
-                msg = "✅ Payment successful!\n\n❌ Service temporarily unavailable. Please try again later."
-                send_message(user_id, msg)
+                msg = f"{get_text(user_id, 'payment_successful')}\n\n{get_text(user_id, 'service_unavailable')}"
+                send_message(user_id, msg, reply_markup=quick_action_keyboard(user_id))
                 notify_admins(user_id, imei, {"error": "Invalid JSON response", "raw": res.text})
                 
         else:
             logger.error(f"API returned status code: {res.status_code}")
-            msg = "✅ Payment successful!\n\n❌ Service temporarily unavailable. Please try again later."
-            send_message(user_id, msg)
+            msg = f"{get_text(user_id, 'payment_successful')}\n\n{get_text(user_id, 'service_unavailable')}"
+            send_message(user_id, msg, reply_markup=quick_action_keyboard(user_id))
             notify_admins(user_id, imei, {"error": f"Status code: {res.status_code}"})
             
     except requests.Timeout:
         logger.error("API request timed out")
-        msg = "✅ Payment successful!\n\n❌ Service temporarily unavailable. Please try again later."
-        send_message(user_id, msg)
+        msg = f"{get_text(user_id, 'payment_successful')}\n\n{get_text(user_id, 'service_unavailable')}"
+        send_message(user_id, msg, reply_markup=quick_action_keyboard(user_id))
         notify_admins(user_id, imei, {"error": "Timeout"})
         
     except Exception as e:
         logger.error(f"IMEI API error: {e}")
-        msg = "✅ Payment successful!\n\n❌ Service temporarily unavailable. Please try again later."
-        send_message(user_id, msg)
+        msg = f"{get_text(user_id, 'payment_successful')}\n\n{get_text(user_id, 'service_unavailable')}"
+        send_message(user_id, msg, reply_markup=quick_action_keyboard(user_id))
         notify_admins(user_id, imei, {"error": str(e)})
 
 def notify_admins(user_id, imei, api_response=None):
     """Notify admins about the payment with API details"""
     for admin_id in ADMIN_IDS:
-        admin_msg = f"💰 Payment received!\n"
-        admin_msg += f"User: {user_id}\n"
+        # Get admin's language preference
+        admin_msg = f"{get_text(admin_id, 'admin_payment_received')}\n"
+        admin_msg += f"{get_text(admin_id, 'admin_user')}: {user_id}\n"
         admin_msg += f"IMEI: {imei}\n"
         
         if api_response:
             if isinstance(api_response, dict):
-                admin_msg += f"\nAPI Response:\n"
+                admin_msg += f"\n{get_text(admin_id, 'admin_api_response')}:\n"
                 for key, value in api_response.items():
                     admin_msg += f"{key}: {value}\n"
         
