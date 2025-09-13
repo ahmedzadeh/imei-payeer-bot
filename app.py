@@ -179,8 +179,29 @@ def quick_action_keyboard(user_id):
         "resize_keyboard": True
     }
 
+def is_button_match(text, button_key, user_id):
+    """Check if text matches a button, handling emoji variations"""
+    expected_text = get_text(user_id, button_key)
+    
+    # Direct match
+    if text == expected_text:
+        return True
+    
+    # Check if the key words are present (ignoring emojis)
+    if button_key == 'help' and ('help' in text.lower() or 'помощь' in text.lower()):
+        return True
+    elif button_key == 'check_imei' and ('check' in text.lower() or 'imei' in text.lower() or 'проверить' in text.lower()):
+        return True
+    elif button_key == 'check_another' and ('another' in text.lower() or 'другой' in text.lower()):
+        return True
+    elif button_key == 'back' and ('back' in text.lower() or 'назад' in text.lower()):
+        return True
+    
+    return False
+
 def handle_text(chat_id, text):
     logger.info(f"Handling text from {chat_id}: '{text}'")
+    logger.info(f"Text bytes: {text.encode('utf-8')}")
     logger.info(f"User language: {user_languages.get(chat_id, 'not set')}")
     logger.info(f"User state: {user_states.get(chat_id, 'none')}")
     
@@ -188,24 +209,22 @@ def handle_text(chat_id, text):
         handle_start(chat_id)
         return
     
-    # Clear any existing state when using menu buttons
-    if text in [get_text(chat_id, 'check_imei'), get_text(chat_id, 'check_another'), 
-                get_text(chat_id, 'help'), get_text(chat_id, 'back')]:
-        user_states.pop(chat_id, None)
-        logger.info(f"Cleared state for user {chat_id}")
+    # Check for button matches using the flexible matching
+    if is_button_match(text, 'help', chat_id):
+        logger.info(f"Help button detected for user {chat_id}")
+        user_states.pop(chat_id, None)  # Clear any state
+        send_message(chat_id, get_text(chat_id, 'help_text'), parse_mode="Markdown")
+        return
     
-    # Handle all button texts
-    if text == get_text(chat_id, 'check_imei') or text == get_text(chat_id, 'check_another'):
+    elif is_button_match(text, 'check_imei', chat_id) or is_button_match(text, 'check_another', chat_id):
+        logger.info(f"Check IMEI button detected for user {chat_id}")
         user_states[chat_id] = "awaiting_imei"
         send_message(chat_id, get_text(chat_id, 'enter_imei'))
-        logger.info(f"Set state to awaiting_imei for user {chat_id}")
+        return
     
-    elif text == get_text(chat_id, 'help'):
-        logger.info(f"Sending help text to user {chat_id}")
-        send_message(chat_id, get_text(chat_id, 'help_text'), parse_mode="Markdown")
-    
-    elif text == get_text(chat_id, 'back'):
-        # Go back to main menu
+    elif is_button_match(text, 'back', chat_id):
+        logger.info(f"Back button detected for user {chat_id}")
+        user_states.pop(chat_id, None)  # Clear any state
         keyboard = {
             "keyboard": [
                 [{"text": get_text(chat_id, 'check_imei')}],
@@ -213,9 +232,10 @@ def handle_text(chat_id, text):
             ],
             "resize_keyboard": True
         }
-        send_message(chat_id, get_text(chat_id, 'welcome'), 
-                    reply_markup=keyboard)
+        send_message(chat_id, get_text(chat_id, 'welcome'), reply_markup=keyboard)
+        return
     
+    # Handle IMEI input
     elif user_states.get(chat_id) == "awaiting_imei":
         imei = text.strip()
         if not imei.isdigit() or len(imei) != 15:
@@ -264,6 +284,7 @@ def handle_text(chat_id, text):
         
         send_message(chat_id, get_text(chat_id, 'payment_prompt', imei), reply_markup=keyboard)
         user_states.pop(chat_id, None)  # Clear the state after processing
+    
     else:
         # If text doesn't match any button, show main menu
         keyboard = {
@@ -273,8 +294,7 @@ def handle_text(chat_id, text):
             ],
             "resize_keyboard": True
         }
-        send_message(chat_id, get_text(chat_id, 'use_menu'), 
-                    reply_markup=keyboard)
+        send_message(chat_id, get_text(chat_id, 'use_menu'), reply_markup=keyboard)
 
 def send_imei_result(user_id, imei):
     try:
