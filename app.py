@@ -180,16 +180,28 @@ def quick_action_keyboard(user_id):
     }
 
 def handle_text(chat_id, text):
+    logger.info(f"Handling text from {chat_id}: '{text}'")
+    logger.info(f"User language: {user_languages.get(chat_id, 'not set')}")
+    logger.info(f"User state: {user_states.get(chat_id, 'none')}")
+    
     if chat_id not in user_languages:
         handle_start(chat_id)
         return
+    
+    # Clear any existing state when using menu buttons
+    if text in [get_text(chat_id, 'check_imei'), get_text(chat_id, 'check_another'), 
+                get_text(chat_id, 'help'), get_text(chat_id, 'back')]:
+        user_states.pop(chat_id, None)
+        logger.info(f"Cleared state for user {chat_id}")
     
     # Handle all button texts
     if text == get_text(chat_id, 'check_imei') or text == get_text(chat_id, 'check_another'):
         user_states[chat_id] = "awaiting_imei"
         send_message(chat_id, get_text(chat_id, 'enter_imei'))
+        logger.info(f"Set state to awaiting_imei for user {chat_id}")
     
     elif text == get_text(chat_id, 'help'):
+        logger.info(f"Sending help text to user {chat_id}")
         send_message(chat_id, get_text(chat_id, 'help_text'), parse_mode="Markdown")
     
     elif text == get_text(chat_id, 'back'):
@@ -215,6 +227,7 @@ def handle_text(chat_id, text):
                 "resize_keyboard": True
             }
             send_message(chat_id, get_text(chat_id, 'invalid_imei'), reply_markup=keyboard)
+            user_states.pop(chat_id, None)  # Clear the state
             return
         
         order_id = str(uuid.uuid4())
@@ -250,7 +263,7 @@ def handle_text(chat_id, text):
         }
         
         send_message(chat_id, get_text(chat_id, 'payment_prompt', imei), reply_markup=keyboard)
-        user_states[chat_id] = None
+        user_states.pop(chat_id, None)  # Clear the state after processing
     else:
         # If text doesn't match any button, show main menu
         keyboard = {
