@@ -141,12 +141,9 @@ def send_message(chat_id, text, reply_markup=None, parse_mode=None):
     except Exception as e:
         logger.error(f"Failed to send message: {e}")
 
-def answer_callback_query(callback_query_id, text=None):
+def answer_callback_query(callback_query_id):
     try:
-        data = {"callback_query_id": callback_query_id}
-        if text:
-            data["text"] = text
-        requests.post(f"{TELEGRAM_API}/answerCallbackQuery", json=data)
+        requests.post(f"{TELEGRAM_API}/answerCallbackQuery", json={"callback_query_id": callback_query_id})
     except Exception as e:
         logger.error(f"Failed to answer callback query: {e}")
 
@@ -161,52 +158,77 @@ def handle_start(chat_id):
 
 def handle_language_selection(chat_id, language):
     user_languages[chat_id] = language
-    user_states.pop(chat_id, None)  # Clear any existing state
     
     keyboard = {
-        "inline_keyboard": [
-            [{"text": get_text(chat_id, 'check_imei'), "callback_data": "check_imei"}],
-            [{"text": get_text(chat_id, 'help'), "callback_data": "help"}]
-        ]
+        "keyboard": [
+            [{"text": get_text(chat_id, 'check_imei')}],
+            [{"text": get_text(chat_id, 'help')}]
+        ],
+        "resize_keyboard": True
     }
     
     send_message(chat_id, get_text(chat_id, 'language_selected'))
     send_message(chat_id, get_text(chat_id, 'welcome'), reply_markup=keyboard)
 
-def main_menu_keyboard(user_id):
-    return {
-        "inline_keyboard": [
-            [{"text": get_text(user_id, 'check_imei'), "callback_data": "check_imei"}],
-            [{"text": get_text(user_id, 'help'), "callback_data": "help"}]
-        ]
-    }
-
 def quick_action_keyboard(user_id):
     return {
-        "inline_keyboard": [
-            [{"text": get_text(user_id, 'check_another'), "callback_data": "check_imei"}],
-            [{"text": get_text(user_id, 'back'), "callback_data": "back"}]
-        ]
+        "keyboard": [
+            [{"text": get_text(user_id, 'check_another')}],
+            [{"text": get_text(user_id, 'back')}]
+        ],
+        "resize_keyboard": True
     }
 
 def handle_text(chat_id, text):
     logger.info(f"Handling text from {chat_id}: '{text}'")
+    logger.info(f"User language: {user_languages.get(chat_id, 'not set')}")
     logger.info(f"User state: {user_states.get(chat_id, 'none')}")
     
     if chat_id not in user_languages:
         handle_start(chat_id)
         return
     
-    # If user is awaiting IMEI input
-    if user_states.get(chat_id) == "awaiting_imei":
+    # Clear any existing state when using menu buttons
+    if text in [get_text(chat_id, 'check_imei'), get_text(chat_id, 'check_another'), 
+                get_text(chat_id, 'help'), get_text(chat_id, 'back')]:
+        user_states.pop(chat_id, None)
+        logger.info(f"Cleared state for user {chat_id}")
+    
+    # Handle all button texts
+    if text == get_text(chat_id, 'check_imei') or text == get_text(chat_id, 'check_another'):
+        user_states[chat_id] = "awaiting_imei"
+        send_message(chat_id, get_text(chat_id, 'enter_imei'))
+        logger.info(f"Set state to awaiting_imei for user {chat_id}")
+    
+    elif text == get_text(chat_id, 'help'):
+        logger.info(f"Sending help text to user {chat_id}")
+        send_message(chat_id, get_text(chat_id, 'help_text'), parse_mode="Markdown")
+    
+    elif text == get_text(chat_id, 'back'):
+        # Go back to main menu
+        keyboard = {
+            "keyboard": [
+                [{"text": get_text(chat_id, 'check_imei')}],
+                [{"text": get_text(chat_id, 'help')}]
+            ],
+            "resize_keyboard": True
+        }
+        send_message(chat_id, get_text(chat_id, 'welcome'), 
+                    reply_markup=keyboard)
+    
+    elif user_states.get(chat_id) == "awaiting_imei":
         imei = text.strip()
         if not imei.isdigit() or len(imei) != 15:
-            send_message(chat_id, get_text(chat_id, 'invalid_imei'))
-            send_message(chat_id, get_text(chat_id, 'enter_imei'))
+            keyboard = {
+                "keyboard": [
+                    [{"text": get_text(chat_id, 'check_imei')}],
+                    [{"text": get_text(chat_id, 'help')}]
+                ],
+                "resize_keyboard": True
+            }
+            send_message(chat_id, get_text(chat_id, 'invalid_imei'), reply_markup=keyboard)
+            user_states.pop(chat_id, None)  # Clear the state
             return
-        
-        # Clear the state
-        user_states.pop(chat_id, None)
         
         order_id = str(uuid.uuid4())
         pending_orders[order_id] = {
@@ -241,33 +263,18 @@ def handle_text(chat_id, text):
         }
         
         send_message(chat_id, get_text(chat_id, 'payment_prompt', imei), reply_markup=keyboard)
+        user_states.pop(chat_id, None)  # Clear the state after processing
     else:
-        # For any other text, show the main menu
+        # If text doesn't match any button, show main menu
+        keyboard = {
+            "keyboard": [
+                [{"text": get_text(chat_id, 'check_imei')}],
+                [{"text": get_text(chat_id, 'help')}]
+            ],
+            "resize_keyboard": True
+        }
         send_message(chat_id, get_text(chat_id, 'use_menu'), 
-                    reply_markup=main_menu_keyboard(chat_id))
-
-def handle_callback(chat_id, callback_data, callback_query_id):
-    logger.info(f"Handling callback from {chat_id}: '{callback_data}'")
-    
-    if callback_data == "check_imei":
-        user_states[chat_id] = "awaiting_imei"
-        send_message(chat_id, get_text(chat_id, 'enter_imei'))
-        answer_callback_query(callback_query_id)
-        
-    elif callback_data == "help":
-        send_message(chat_id, get_text(chat_id, 'help_text'), parse_mode="Markdown")
-        answer_callback_query(callback_query_id)
-        
-    elif callback_data == "back":
-        user_states.pop(chat_id, None)  # Clear any state
-        send_message(chat_id, get_text(chat_id, 'welcome'), 
-                    reply_markup=main_menu_keyboard(chat_id))
-        answer_callback_query(callback_query_id)
-        
-    elif callback_data.startswith('lang_'):
-        language = callback_data.split('_')[1]
-        handle_language_selection(chat_id, language)
-        answer_callback_query(callback_query_id, get_text(chat_id, 'language_selected'))
+                    reply_markup=keyboard)
 
 def send_imei_result(user_id, imei):
     try:
@@ -403,7 +410,10 @@ def webhook():
             chat_id = query["message"]["chat"]["id"]
             data = query["data"]
             
-            handle_callback(chat_id, data, query["id"])
+            if data.startswith('lang_'):
+                language = data.split('_')[1]
+                handle_language_selection(chat_id, language)
+                answer_callback_query(query["id"])
         
         return "OK"
     except Exception as e:
