@@ -109,7 +109,7 @@ texts = {
         'payment_prompt': "📱 IMEI: {}\nTo receive your result, please complete payment:",
         'pay_button': "💳 Pay $0.32 USD",
         'choose_language': "Please select your language / Пожалуйста, выберите ваш язык:",
-        'help_text': "📋 How to use:\n1. Send your 15-digit IMEI\n2. Click payment button\n3. Get your result\n\n📱 *How to find IMEI:*\n• Dial \\*#06#\n• Settings → About phone → IMEI\n\n⚠️ No refunds for wrong IMEI numbers!",
+        'help_text': "📋 How to use:\n1. Send your 15-digit IMEI\n2. Click payment button\n3. Get your result\n\n📱 *How to find IMEI:*\n• Dial \\*#06#\n• Settings → About phone → IMEI\n\n⚠️ No refunds for wrong IMEI numbers!\n\n*Available commands:*\n/start - Start bot\n/myorders - View your order history\n/help - Show this help",
         'payment_successful': "✅ Payment successful!",
         'imei_info': "📱 IMEI Info:",
         'imei_not_found': "⚠️ IMEI not found in the database. Please ensure it is correct.",
@@ -122,6 +122,9 @@ texts = {
         'use_menu': "❗ Please use the menu buttons below.",
         'stats_title': "📊 *Bot Statistics*\n\n",
         'stats_total_users': "👥 Total users: {}",
+        'stats_users_with_orders': "👥 Users who checked IMEI: {}",
+        'stats_users_who_paid': "💳 Users who paid: {}",
+        'stats_conversion_rate': "📈 Conversion rate: {:.1f}%",
         'stats_total_orders': "📦 Total orders: {}",
         'stats_paid_orders': "✅ Paid orders: {}",
         'stats_pending_orders': "⏳ Pending orders: {}",
@@ -132,7 +135,14 @@ texts = {
         'stats_last_7_days': "\n📈 *Last 7 Days:*\n",
         'stats_7_days_orders': "📦 Orders: {}",
         'stats_7_days_revenue': "💰 Revenue: ${:.2f}",
-        'stats_no_access': "❌ You don't have access to this command."
+        'stats_no_access': "❌ You don't have access to this command.",
+        'recent_orders_title': "📋 *Recent Orders*\n\n",
+        'order_info': "Order #{}\n👤 User: {}\n📱 IMEI: {}\n💰 Status: {}\n📅 Date: {}\n",
+        'no_orders': "No orders found.",
+        'user_orders_title': "📋 *Your Order History*\n\n",
+        'search_results_title': "*Search Results for IMEI {}:*\n\n",
+        'search_usage': "Usage: /search <IMEI>",
+        'admin_help': "\n\n*Admin commands:*\n/stats - View statistics\n/orders - View recent orders\n/search <IMEI> - Search for IMEI"
     },
     'ru': {
         'welcome': "👋 Добро пожаловать! Выберите опцию:",
@@ -144,7 +154,7 @@ texts = {
         'payment_prompt': "📱 IMEI: {}\nЧтобы получить результат, пожалуйста, выполните оплату:",
         'pay_button': "💳 Оплатить $0.32 USD",
         'choose_language': "Please select your language / Пожалуйста, выберите ваш язык:",
-        'help_text': "📋 Как использовать:\n1. Отправьте 15-значный IMEI\n2. Нажмите кнопку оплаты\n3. Получите результат\n\n📱 *Как найти IMEI:*\n• Наберите \\*#06#\n• Настройки → О телефоне → IMEI\n\n⚠️ Возврат за неверный IMEI не предоставляется!",
+        'help_text': "📋 Как использовать:\n1. Отправьте 15-значный IMEI\n2. Нажмите кнопку оплаты\n3. Получите результат\n\n📱 *Как найти IMEI:*\n• Наберите \\*#06#\n• Настройки → О телефоне → IMEI\n\n⚠️ Возврат за неверный IMEI не предоставляется!\n\n*Доступные команды:*\n/start - Запустить бота\n/myorders - История ваших заказов\n/help - Показать эту справку",
         'payment_successful': "✅ Оплата успешна!",
         'imei_info': "📱 Информация об IMEI:",
         'imei_not_found': "⚠️ IMEI не найден в базе данных. Пожалуйста, убедитесь, что он правильный.",
@@ -157,6 +167,9 @@ texts = {
         'use_menu': "❗ Пожалуйста, используйте кнопки меню ниже.",
         'stats_title': "📊 *Статистика бота*\n\n",
         'stats_total_users': "👥 Всего пользователей: {}",
+        'stats_users_with_orders': "👥 Пользователей проверили IMEI: {}",
+        'stats_users_who_paid': "💳 Пользователей оплатили: {}",
+        'stats_conversion_rate': "📈 Конверсия: {:.1f}%",
         'stats_total_orders': "📦 Всего заказов: {}",
         'stats_paid_orders': "✅ Оплаченных заказов: {}",
         'stats_pending_orders': "⏳ Ожидающих оплаты: {}",
@@ -167,7 +180,14 @@ texts = {
         'stats_last_7_days': "\n📈 *Последние 7 дней:*\n",
         'stats_7_days_orders': "📦 Заказов: {}",
         'stats_7_days_revenue': "💰 Доход: ${:.2f}",
-        'stats_no_access': "❌ У вас нет доступа к этой команде."
+        'stats_no_access': "❌ У вас нет доступа к этой команде.",
+        'recent_orders_title': "📋 *Последние заказы*\n\n",
+        'order_info': "Заказ #{}\n👤 Пользователь: {}\n📱 IMEI: {}\n💰 Статус: {}\n📅 Дата: {}\n",
+        'no_orders': "Заказы не найдены.",
+        'user_orders_title': "📋 *История ваших заказов*\n\n",
+        'search_results_title': "*Результаты поиска IMEI {}:*\n\n",
+        'search_usage': "Использование: /search <IMEI>",
+        'admin_help': "\n\n*Команды администратора:*\n/stats - Статистика\n/orders - Последние заказы\n/search <IMEI> - Поиск по IMEI"
     }
 }
 
@@ -241,7 +261,6 @@ def get_user_language(telegram_id):
     if not Session:
         # Fallback to in-memory storage
         return user_languages.get(str(telegram_id), 'en')
-    
     db = get_db()
     try:
         user = db.query(User).filter_by(telegram_id=str(telegram_id)).first()
@@ -389,11 +408,21 @@ def update_order_status(order_id, status, api_response=None):
 def get_stats():
     """Get statistics from database"""
     if not Session:
-        # Fallback stats for in-memory storage
+        # Enhanced in-memory stats
         total_users = len(user_languages)
         total_orders = len(pending_orders)
         paid_orders = sum(1 for order in pending_orders.values() if order['status'] == 'paid')
         pending_orders_count = sum(1 for order in pending_orders.values() if order['status'] == 'pending')
+        
+        # Calculate conversion rate
+        conversion_rate = (paid_orders / total_orders * 100) if total_orders > 0 else 0
+        
+        # Users who created orders
+        users_with_orders = len(set(order['user_id'] for order in pending_orders.values()))
+        
+        # Users who paid
+        users_who_paid = len(set(order['user_id'] for order in pending_orders.values() if order['status'] == 'paid'))
+        
         total_revenue = paid_orders * float(PRICE)
         
         today = datetime.now().date()
@@ -408,9 +437,12 @@ def get_stats():
         
         return {
             'total_users': total_users,
+            'users_with_orders': users_with_orders,
+            'users_who_paid': users_who_paid,
             'total_orders': total_orders,
             'paid_orders': paid_orders,
             'pending_orders': pending_orders_count,
+            'conversion_rate': conversion_rate,
             'total_revenue': total_revenue,
             'today_orders': today_orders,
             'today_revenue': today_revenue,
@@ -425,8 +457,17 @@ def get_stats():
         paid_orders = db.query(Order).filter_by(status='paid').count()
         pending_orders_count = db.query(Order).filter_by(status='pending').count()
         
+        # Conversion rate
+        conversion_rate = (paid_orders / total_orders * 100) if total_orders > 0 else 0
+        
+        # Users who created orders
+        users_with_orders = db.query(Order.user_telegram_id).distinct().count()
+        
+        # Users who paid
+        users_who_paid = db.query(Order.user_telegram_id).filter(Order.status == 'paid').distinct().count()
+        
         # Revenue
-        total_revenue = db.query(Order).filter_by(status='paid').count() * float(PRICE)
+        total_revenue = paid_orders * float(PRICE)
         
         # Today's stats
         today = datetime.utcnow().date()
@@ -446,9 +487,12 @@ def get_stats():
         
         return {
             'total_users': total_users,
+            'users_with_orders': users_with_orders,
+            'users_who_paid': users_who_paid,
             'total_orders': total_orders,
             'paid_orders': paid_orders,
             'pending_orders': pending_orders_count,
+            'conversion_rate': conversion_rate,
             'total_revenue': total_revenue,
             'today_orders': today_orders,
             'today_revenue': today_revenue,
@@ -457,13 +501,15 @@ def get_stats():
         }
     except Exception as e:
         logger.error(f"Error getting stats: {e}")
-        # Return in-memory stats as fallback
         return {
-            'total_users': len(user_languages),
-            'total_orders': len(pending_orders),
-            'paid_orders': sum(1 for order in pending_orders.values() if order['status'] == 'paid'),
-            'pending_orders': sum(1 for order in pending_orders.values() if order['status'] == 'pending'),
-            'total_revenue': sum(1 for order in pending_orders.values() if order['status'] == 'paid') * float(PRICE),
+            'total_users': 0,
+            'users_with_orders': 0,
+            'users_who_paid': 0,
+            'total_orders': 0,
+            'paid_orders': 0,
+            'pending_orders': 0,
+            'conversion_rate': 0,
+            'total_revenue': 0,
             'today_orders': 0,
             'today_revenue': 0,
             'last_7_days_orders': 0,
@@ -587,7 +633,10 @@ def handle_text(chat_id, text):
     if is_button_match(text, 'help', chat_id):
         logger.info(f"Help button detected for user {chat_id}")
         set_user_state(chat_id, None)  # Clear state
-        send_message(chat_id, get_text(chat_id, 'help_text'), parse_mode="Markdown")
+        help_text = get_text(chat_id, 'help_text')
+        if chat_id in ADMIN_IDS:
+            help_text += get_text(chat_id, 'admin_help')
+        send_message(chat_id, help_text, parse_mode="Markdown")
         return
     
     elif is_button_match(text, 'check_imei', chat_id) or is_button_match(text, 'check_another', chat_id):
@@ -681,6 +730,10 @@ def handle_stats(chat_id):
     # Build stats message
     msg = get_text(chat_id, 'stats_title')
     msg += f"{get_text(chat_id, 'stats_total_users', stats.get('total_users', 0))}\n"
+    msg += f"{get_text(chat_id, 'stats_users_with_orders', stats.get('users_with_orders', 0))}\n"
+    msg += f"{get_text(chat_id, 'stats_users_who_paid', stats.get('users_who_paid', 0))}\n"
+    msg += f"{get_text(chat_id, 'stats_conversion_rate', stats.get('conversion_rate', 0))}\n\n"
+    
     msg += f"{get_text(chat_id, 'stats_total_orders', stats.get('total_orders', 0))}\n"
     msg += f"{get_text(chat_id, 'stats_paid_orders', stats.get('paid_orders', 0))}\n"
     msg += f"{get_text(chat_id, 'stats_pending_orders', stats.get('pending_orders', 0))}\n"
@@ -695,6 +748,161 @@ def handle_stats(chat_id):
     msg += f"{get_text(chat_id, 'stats_7_days_revenue', stats.get('last_7_days_revenue', 0))}"
     
     send_message(chat_id, msg, parse_mode="Markdown")
+
+def handle_recent_orders(chat_id, limit=10):
+    """Show recent orders - admin only"""
+    if chat_id not in ADMIN_IDS:
+        send_message(chat_id, get_text(chat_id, 'stats_no_access'))
+        return
+    
+    if not Session:
+        # In-memory version
+        recent = sorted(pending_orders.items(), 
+                       key=lambda x: x[1]['timestamp'], 
+                       reverse=True)[:limit]
+        
+        if not recent:
+            send_message(chat_id, get_text(chat_id, 'no_orders'))
+            return
+        
+        msg = get_text(chat_id, 'recent_orders_title')
+        for order_id, order in recent:
+            msg += get_text(chat_id, 'order_info',
+                          order_id[:8],  # Short ID
+                          order['user_id'],
+                          order['imei'],
+                          order['status'],
+                          order['timestamp'].strftime('%Y-%m-%d %H:%M'))
+            msg += "\n"
+        
+        send_message(chat_id, msg, parse_mode="Markdown")
+    else:
+        # Database version
+        db = get_db()
+        try:
+            orders = db.query(Order).order_by(Order.created_at.desc()).limit(limit).all()
+            
+            if not orders:
+                send_message(chat_id, get_text(chat_id, 'no_orders'))
+                return
+            
+            msg = get_text(chat_id, 'recent_orders_title')
+            for order in orders:
+                msg += get_text(chat_id, 'order_info',
+                              order.order_id[:8],  # Short ID
+                              order.user_telegram_id,
+                              order.imei,
+                              order.status,
+                              order.created_at.strftime('%Y-%m-%d %H:%M'))
+                msg += "\n"
+            
+            send_message(chat_id, msg, parse_mode="Markdown")
+        except Exception as e:
+            logger.error(f"Error getting recent orders: {e}")
+            send_message(chat_id, "Error retrieving orders")
+        finally:
+            close_db(db)
+
+def handle_my_orders(chat_id):
+    """Show user's own order history"""
+    if not Session:
+        # In-memory version
+        my_orders = [(oid, o) for oid, o in pending_orders.items() 
+                     if str(o['user_id']) == str(chat_id)]
+        my_orders.sort(key=lambda x: x[1]['timestamp'], reverse=True)
+        
+        if not my_orders:
+            send_message(chat_id, get_text(chat_id, 'no_orders'))
+            return
+        
+        msg = get_text(chat_id, 'user_orders_title')
+        for order_id, order in my_orders[:20]:  # Last 20 orders
+            status_emoji = "✅" if order['status'] == 'paid' else "⏳"
+            msg += f"{status_emoji} IMEI: `{order['imei']}`\n"
+            msg += f"   Date: {order['timestamp'].strftime('%Y-%m-%d %H:%M')}\n\n"
+        
+        send_message(chat_id, msg, parse_mode="Markdown")
+    else:
+        # Database version
+        db = get_db()
+        try:
+            orders = db.query(Order).filter_by(
+                user_telegram_id=str(chat_id)
+            ).order_by(Order.created_at.desc()).limit(20).all()
+            
+            if not orders:
+                send_message(chat_id, get_text(chat_id, 'no_orders'))
+                return
+            
+            msg = get_text(chat_id, 'user_orders_title')
+            for order in orders:
+                status_emoji = "✅" if order.status == 'paid' else "⏳"
+                msg += f"{status_emoji} IMEI: `{order.imei}`\n"
+                msg += f"   Date: {order.created_at.strftime('%Y-%m-%d %H:%M')}\n\n"
+            
+            send_message(chat_id, msg, parse_mode="Markdown")
+        except Exception as e:
+            logger.error(f"Error getting user orders: {e}")
+            send_message(chat_id, "Error retrieving your orders")
+        finally:
+            close_db(db)
+
+def search_imei_history(chat_id, imei):
+    """Search for specific IMEI in history - admin only"""
+    if chat_id not in ADMIN_IDS:
+        send_message(chat_id, get_text(chat_id, 'stats_no_access'))
+        return
+    
+    if not Session:
+        # In-memory search
+        found = [(oid, o) for oid, o in pending_orders.items() 
+                 if imei in o['imei']]
+        
+        if not found:
+            send_message(chat_id, f"No orders found for IMEI: {imei}")
+            return
+        
+        msg = get_text(chat_id, 'search_results_title', imei)
+        for order_id, order in found:
+            msg += f"User: {order['user_id']}\n"
+            msg += f"Status: {order['status']}\n"
+            msg += f"Date: {order['timestamp'].strftime('%Y-%m-%d %H:%M')}\n\n"
+        
+        send_message(chat_id, msg, parse_mode="Markdown")
+    else:
+        # Database search
+        db = get_db()
+        try:
+            orders = db.query(Order).filter(
+                Order.imei.like(f'%{imei}%')
+            ).order_by(Order.created_at.desc()).all()
+            
+            if not orders:
+                send_message(chat_id, f"No orders found for IMEI: {imei}")
+                return
+            
+            msg = get_text(chat_id, 'search_results_title', imei)
+            for order in orders:
+                msg += f"User: {order.user_telegram_id}\n"
+                msg += f"Status: {order.status}\n"
+                msg += f"Date: {order.created_at.strftime('%Y-%m-%d %H:%M')}\n"
+                if order.api_response:
+                    try:
+                        api_data = json.loads(order.api_response)
+                        if 'Model' in api_data:
+                            msg += f"Model: {api_data['Model']}\n"
+                        elif 'Description' in api_data:
+                            msg += f"Model: {api_data['Description']}\n"
+                    except:
+                        pass
+                msg += "\n"
+            
+            send_message(chat_id, msg, parse_mode="Markdown")
+        except Exception as e:
+            logger.error(f"Error searching IMEI: {e}")
+            send_message(chat_id, "Error searching orders")
+        finally:
+            close_db(db)
 
 def send_imei_result(user_id, imei, order_id):
     """Send IMEI check result to user"""
@@ -828,6 +1036,22 @@ def webhook():
                     handle_start(chat_id)
                 elif text.startswith('/stats'):
                     handle_stats(chat_id)
+                elif text.startswith('/orders'):
+                    handle_recent_orders(chat_id)
+                elif text.startswith('/myorders'):
+                    handle_my_orders(chat_id)
+                elif text.startswith('/search'):
+                    # Extract IMEI from command like "/search 123456789012345"
+                    parts = text.split()
+                    if len(parts) > 1:
+                        search_imei_history(chat_id, parts[1])
+                    else:
+                        send_message(chat_id, get_text(chat_id, 'search_usage'))
+                elif text.startswith('/help'):
+                    help_text = get_text(chat_id, 'help_text')
+                    if chat_id in ADMIN_IDS:
+                        help_text += get_text(chat_id, 'admin_help')
+                    send_message(chat_id, help_text, parse_mode="Markdown")
                 else:
                     handle_text(chat_id, text)
         
