@@ -54,7 +54,7 @@ texts = {
         'payment_prompt': "📱 IMEI: {}\nTo receive your result, please complete payment:",
         'pay_button': "💳 Pay $0.32 USD",
         'choose_language': "Please select your language / Пожалуйста, выберите ваш язык:",
-        'help_text': "📋 How to use:\n1. Send your 15-digit IMEI\n2. Click payment button\n3. Get your result\n\n📱 *How to find IMEI:*\n• Dial *#06#\n• Settings → About phone → IMEI\n\n⚠️ No refunds for wrong IMEI numbers!",
+        'help_text': "📋 How to use:\n1. Send your 15-digit IMEI\n2. Click payment button\n3. Get your result\n\n📱 *How to find IMEI:*\n• Dial \\*#06#\n• Settings → About phone → IMEI\n\n⚠️ No refunds for wrong IMEI numbers!",
         'payment_successful': "✅ Payment successful!",
         'imei_info': "📱 IMEI Info:",
         'imei_not_found': "⚠️ IMEI not found in the database. Please ensure it is correct.",
@@ -76,7 +76,7 @@ texts = {
         'payment_prompt': "📱 IMEI: {}\nЧтобы получить результат, пожалуйста, выполните оплату:",
         'pay_button': "💳 Оплатить $0.32 USD",
         'choose_language': "Please select your language / Пожалуйста, выберите ваш язык:",
-        'help_text': "📋 Как использовать:\n1. Отправьте 15-значный IMEI\n2. Нажмите кнопку оплаты\n3. Получите результат\n\n📱 *Как найти IMEI:*\n• Наберите *#06#\n• Настройки → О телефоне → IMEI\n\n⚠️ Возврат за неверный IMEI не предоставляется!",
+        'help_text': "📋 Как использовать:\n1. Отправьте 15-значный IMEI\n2. Нажмите кнопку оплаты\n3. Получите результат\n\n📱 *Как найти IMEI:*\n• Наберите \\*#06#\n• Настройки → О телефоне → IMEI\n\n⚠️ Возврат за неверный IMEI не предоставляется!",
         'payment_successful': "✅ Оплата успешна!",
         'imei_info': "📱 Информация об IMEI:",
         'imei_not_found': "⚠️ IMEI не найден в базе данных. Пожалуйста, убедитесь, что он правильный.",
@@ -137,9 +137,22 @@ def send_message(chat_id, text, reply_markup=None, parse_mode=None):
             data["parse_mode"] = parse_mode
             
         response = requests.post(f"{TELEGRAM_API}/sendMessage", json=data)
-        logger.info(f"Message sent: {response.json()}")
+        result = response.json()
+        
+        if not result.get('ok'):
+            logger.error(f"Failed to send message: {result}")
+            # If Markdown parsing failed, try again without parse_mode
+            if parse_mode and 'parse entities' in result.get('description', ''):
+                logger.info("Retrying without parse_mode")
+                data.pop('parse_mode', None)
+                response = requests.post(f"{TELEGRAM_API}/sendMessage", json=data)
+                result = response.json()
+        
+        logger.info(f"Message sent: {result}")
+        return result
     except Exception as e:
         logger.error(f"Failed to send message: {e}")
+        return None
 
 def answer_callback_query(callback_query_id):
     try:
@@ -294,6 +307,7 @@ def handle_text(chat_id, text):
             ],
             "resize_keyboard": True
         }
+
         send_message(chat_id, get_text(chat_id, 'use_menu'), reply_markup=keyboard)
 
 def send_imei_result(user_id, imei):
