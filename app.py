@@ -9,8 +9,7 @@ from urllib.parse import urlencode
 from datetime import datetime, timedelta
 import json
 from sqlalchemy import create_engine, Column, String, Integer, DateTime, Float, Boolean, Text
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker, scoped_session
+from sqlalchemy.orm import declarative_base, sessionmaker, scoped_session
 from sqlalchemy.pool import NullPool
 
 # Logging
@@ -72,7 +71,13 @@ class UserState(Base):
     state = Column(String(50), nullable=True)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
+# Initialize in-memory storage (always initialize these)
+pending_orders = {}
+user_languages = {}
+user_states = {}
+
 # Initialize database
+Session = None
 try:
     if DATABASE_URL:
         engine = create_engine(DATABASE_URL, poolclass=NullPool, echo=False)
@@ -81,16 +86,9 @@ try:
         logger.info("Database connected successfully")
     else:
         logger.warning("No DATABASE_URL found, using in-memory storage")
-        Session = None
 except Exception as e:
     logger.error(f"Database connection failed: {e}")
-    Session = None
-
-# Fallback in-memory storage if database is not available
-if not Session:
-    pending_orders = {}
-    user_languages = {}
-    user_states = {}
+    logger.info("Falling back to in-memory storage")
 
 # Set webhook
 try:
@@ -232,6 +230,8 @@ def get_or_create_user(telegram_id, language='en'):
     except Exception as e:
         logger.error(f"Error in get_or_create_user: {e}")
         db.rollback()
+        # Fallback to in-memory
+        user_languages[str(telegram_id)] = language
         return None
     finally:
         close_db(db)
@@ -248,7 +248,7 @@ def get_user_language(telegram_id):
         return user.language if user else 'en'
     except Exception as e:
         logger.error(f"Error getting user language: {e}")
-        return 'en'
+        return user_languages.get(str(telegram_id), 'en')
     finally:
         close_db(db)
 
@@ -275,6 +275,11 @@ def set_user_state(telegram_id, state):
     except Exception as e:
         logger.error(f"Error setting user state: {e}")
         db.rollback()
+        # Fallback to in-memory
+        if state:
+            user_states[str(telegram_id)] = state
+        else:
+            user_states.pop(str(telegram_id), None)
     finally:
         close_db(db)
 
@@ -290,7 +295,7 @@ def get_user_state(telegram_id):
         return user_state.state if user_state else None
     except Exception as e:
         logger.error(f"Error getting user state: {e}")
-        return None
+        return user_states.get(str(telegram_id))
     finally:
         close_db(db)
 
@@ -320,6 +325,13 @@ def create_order(telegram_id, imei, order_id):
     except Exception as e:
         logger.error(f"Error creating order: {e}")
         db.rollback()
+        # Fallback to in-memory
+        pending_orders[order_id] = {
+            'imei': imei,
+            'user_id': telegram_id,
+            'timestamp': datetime.now(),
+            'status': 'pending'
+        }
         return None
     finally:
         close_db(db)
@@ -335,7 +347,7 @@ def get_order(order_id):
         return db.query(Order).filter_by(order_id=order_id).first()
     except Exception as e:
         logger.error(f"Error getting order: {e}")
-        return None
+        return pending_orders.get(order_id)
     finally:
         close_db(db)
 
@@ -365,6 +377,11 @@ def update_order_status(order_id, status, api_response=None):
     except Exception as e:
         logger.error(f"Error updating order: {e}")
         db.rollback()
+        # Fallback to in-memory
+        if order_id in pending_orders:
+            pending_orders[order_id]['status'] = status
+            if api_response:
+                pending_orders[order_id]['api_response'] = api_response
         return False
     finally:
         close_db(db)
@@ -406,7 +423,7 @@ def get_stats():
         total_users = db.query(User).count()
         total_orders = db.query(Order).count()
         paid_orders = db.query(Order).filter_by(status='paid').count()
-        pending_orders = db.query(Order).filter_by(status='pending').count()
+        pending_orders_count = db.query(Order).filter_by(status='pending').count()
         
         # Revenue
         total_revenue = db.query(Order).filter_by(status='paid').count() * float(PRICE)
@@ -431,7 +448,7 @@ def get_stats():
             'total_users': total_users,
             'total_orders': total_orders,
             'paid_orders': paid_orders,
-            'pending_orders': pending_orders,
+            'pending_orders': pending_orders_count,
             'total_revenue': total_revenue,
             'today_orders': today_orders,
             'today_revenue': today_revenue,
@@ -440,7 +457,18 @@ def get_stats():
         }
     except Exception as e:
         logger.error(f"Error getting stats: {e}")
-        return {}
+        # Return in-memory stats as fallback
+        return {
+            'total_users': len(user_languages),
+            'total_orders': len(pending_orders),
+            'paid_orders': sum(1 for order in pending_orders.values() if order['status'] == 'paid'),
+            'pending_orders': sum(1 for order in pending_orders.values() if order['status'] == 'pending'),
+            'total_revenue': sum(1 for order in pending_orders.values() if order['status'] == 'paid') * float(PRICE),
+            'today_orders': 0,
+            'today_revenue': 0,
+            'last_7_days_orders': 0,
+            'last_7_days_revenue': 0
+        }
     finally:
         close_db(db)
 
