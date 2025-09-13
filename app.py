@@ -36,6 +36,9 @@ PAYEER_PAYMENT_URL = "https://payeer.com/merchant/"
 PRICE = "0.32"
 ADMIN_IDS = {2103379072, 6927331058}
 
+# Flask app
+app = Flask(__name__)
+
 # Database setup
 Base = declarative_base()
 
@@ -71,17 +74,130 @@ class UserState(Base):
 
 # Initialize database
 try:
-    engine = create_engine(DATABASE_URL, poolclass=NullPool, echo=False)
-    Base.metadata.create_all(engine)
-    Session = scoped_session(sessionmaker(bind=engine))
-    logger.info("Database connected successfully")
+    if DATABASE_URL:
+        engine = create_engine(DATABASE_URL, poolclass=NullPool, echo=False)
+        Base.metadata.create_all(engine)
+        Session = scoped_session(sessionmaker(bind=engine))
+        logger.info("Database connected successfully")
+    else:
+        logger.warning("No DATABASE_URL found, using in-memory storage")
+        Session = None
 except Exception as e:
     logger.error(f"Database connection failed: {e}")
-    # Fallback to in-memory storage if DB fails
     Session = None
 
-# Flask app
-app = Flask(__name__)
+# Fallback in-memory storage if database is not available
+if not Session:
+    pending_orders = {}
+    user_languages = {}
+    user_states = {}
+
+# Set webhook
+try:
+    response = requests.post(f"{TELEGRAM_API}/setWebhook", json={"url": f"{BASE_URL}/webhook"})
+    logger.info(f"Webhook set: {response.json()}")
+except Exception as e:
+    logger.error(f"Failed to set webhook: {e}")
+
+# Translations
+texts = {
+    'en': {
+        'welcome': "👋 Welcome! Choose an option:",
+        'language_selected': "🇬🇧 English language selected.",
+        'check_imei': "🔍 Check IMEI",
+        'help': "❓ Help",
+        'enter_imei': "🔢 Please enter your 15-digit IMEI number.",
+        'invalid_imei': "❌ Invalid IMEI. It must be 15 digits.",
+        'payment_prompt': "📱 IMEI: {}\nTo receive your result, please complete payment:",
+        'pay_button': "💳 Pay $0.32 USD",
+        'choose_language': "Please select your language / Пожалуйста, выберите ваш язык:",
+        'help_text': "📋 How to use:\n1. Send your 15-digit IMEI\n2. Click payment button\n3. Get your result\n\n📱 *How to find IMEI:*\n• Dial \\*#06#\n• Settings → About phone → IMEI\n\n⚠️ No refunds for wrong IMEI numbers!",
+        'payment_successful': "✅ Payment successful!",
+        'imei_info': "📱 IMEI Info:",
+        'imei_not_found': "⚠️ IMEI not found in the database. Please ensure it is correct.",
+        'service_unavailable': "❌ Service temporarily unavailable. Please try again later.",
+        'check_another': "🔍 Check another IMEI",
+        'admin_payment_received': "💰 Payment received!",
+        'admin_user': "User",
+        'admin_api_response': "API Response",
+        'back': "🔙 Back",
+        'use_menu': "❗ Please use the menu buttons below.",
+        'stats_title': "📊 *Bot Statistics*\n\n",
+        'stats_total_users': "👥 Total users: {}",
+        'stats_total_orders': "📦 Total orders: {}",
+        'stats_paid_orders': "✅ Paid orders: {}",
+        'stats_pending_orders': "⏳ Pending orders: {}",
+        'stats_revenue': "💰 Total revenue: ${:.2f}",
+        'stats_today': "\n📅 *Today's Stats:*\n",
+        'stats_today_orders': "📦 Orders today: {}",
+        'stats_today_revenue': "💰 Revenue today: ${:.2f}",
+        'stats_last_7_days': "\n📈 *Last 7 Days:*\n",
+        'stats_7_days_orders': "📦 Orders: {}",
+        'stats_7_days_revenue': "💰 Revenue: ${:.2f}",
+        'stats_no_access': "❌ You don't have access to this command."
+    },
+    'ru': {
+        'welcome': "👋 Добро пожаловать! Выберите опцию:",
+        'language_selected': "🇷🇺 Выбран русский язык.",
+        'check_imei': "🔍 Проверить IMEI",
+        'help': "❓ Помощь",
+        'enter_imei': "🔢 Пожалуйста, введите ваш 15-значный номер IMEI.",
+        'invalid_imei': "❌ Неверный IMEI. Он должен состоять из 15 цифр.",
+        'payment_prompt': "📱 IMEI: {}\nЧтобы получить результат, пожалуйста, выполните оплату:",
+        'pay_button': "💳 Оплатить $0.32 USD",
+        'choose_language': "Please select your language / Пожалуйста, выберите ваш язык:",
+        'help_text': "📋 Как использовать:\n1. Отправьте 15-значный IMEI\n2. Нажмите кнопку оплаты\n3. Получите результат\n\n📱 *Как найти IMEI:*\n• Наберите \\*#06#\n• Настройки → О телефоне → IMEI\n\n⚠️ Возврат за неверный IMEI не предоставляется!",
+        'payment_successful': "✅ Оплата успешна!",
+        'imei_info': "📱 Информация об IMEI:",
+        'imei_not_found': "⚠️ IMEI не найден в базе данных. Пожалуйста, убедитесь, что он правильный.",
+        'service_unavailable': "❌ Сервис временно недоступен. Пожалуйста, попробуйте позже.",
+        'check_another': "🔍 Проверить другой IMEI",
+        'admin_payment_received': "💰 Платеж получен!",
+        'admin_user': "Пользователь",
+        'admin_api_response': "Ответ API",
+        'back': "🔙 Назад",
+        'use_menu': "❗ Пожалуйста, используйте кнопки меню ниже.",
+        'stats_title': "📊 *Статистика бота*\n\n",
+        'stats_total_users': "👥 Всего пользователей: {}",
+        'stats_total_orders': "📦 Всего заказов: {}",
+        'stats_paid_orders': "✅ Оплаченных заказов: {}",
+        'stats_pending_orders': "⏳ Ожидающих оплаты: {}",
+        'stats_revenue': "💰 Общий доход: ${:.2f}",
+        'stats_today': "\n📅 *Статистика за сегодня:*\n",
+        'stats_today_orders': "📦 Заказов сегодня: {}",
+        'stats_today_revenue': "💰 Доход за сегодня: ${:.2f}",
+        'stats_last_7_days': "\n📈 *Последние 7 дней:*\n",
+        'stats_7_days_orders': "📦 Заказов: {}",
+        'stats_7_days_revenue': "💰 Доход: ${:.2f}",
+        'stats_no_access': "❌ У вас нет доступа к этой команде."
+    }
+}
+
+# Field labels for IMEI results
+field_labels = {
+    'en': {
+        'imei': "*IMEI:*",
+        'imei2': "*IMEI2:*",
+        'meid': "*MEID:*",
+        'serial': "*Serial:*",
+        'desc': "*Desc:*",
+        'purchase': "*Purchase:*",
+        'coverage': "*Coverage:*",
+        'replaced': "*Replaced:*",
+        'simlock': "*SIM Lock:*"
+    },
+    'ru': {
+        'imei': "*IMEI:*",
+        'imei2': "*IMEI2:*",
+        'meid': "*MEID:*",
+        'serial': "*Серийный номер:*",
+        'desc': "*Описание:*",
+        'purchase': "*Дата покупки:*",
+        'coverage': "*Гарантия:*",
+        'replaced': "*Заменен:*",
+        'simlock': "*SIM-блокировка:*"
+    }
+}
 
 # Database helper functions
 def get_db():
@@ -97,10 +213,12 @@ def close_db(db):
 
 def get_or_create_user(telegram_id, language='en'):
     """Get or create user in database"""
-    db = get_db()
-    if not db:
-        return None
+    if not Session:
+        # Fallback to in-memory storage
+        user_languages[str(telegram_id)] = language
+        return True
     
+    db = get_db()
     try:
         user = db.query(User).filter_by(telegram_id=str(telegram_id)).first()
         if not user:
@@ -120,10 +238,11 @@ def get_or_create_user(telegram_id, language='en'):
 
 def get_user_language(telegram_id):
     """Get user language from database"""
-    db = get_db()
-    if not db:
-        return 'en'
+    if not Session:
+        # Fallback to in-memory storage
+        return user_languages.get(str(telegram_id), 'en')
     
+    db = get_db()
     try:
         user = db.query(User).filter_by(telegram_id=str(telegram_id)).first()
         return user.language if user else 'en'
@@ -135,10 +254,15 @@ def get_user_language(telegram_id):
 
 def set_user_state(telegram_id, state):
     """Set user state in database"""
-    db = get_db()
-    if not db:
+    if not Session:
+        # Fallback to in-memory storage
+        if state:
+            user_states[str(telegram_id)] = state
+        else:
+            user_states.pop(str(telegram_id), None)
         return
     
+    db = get_db()
     try:
         user_state = db.query(UserState).filter_by(telegram_id=str(telegram_id)).first()
         if user_state:
@@ -156,10 +280,11 @@ def set_user_state(telegram_id, state):
 
 def get_user_state(telegram_id):
     """Get user state from database"""
-    db = get_db()
-    if not db:
-        return None
+    if not Session:
+        # Fallback to in-memory storage
+        return user_states.get(str(telegram_id))
     
+    db = get_db()
     try:
         user_state = db.query(UserState).filter_by(telegram_id=str(telegram_id)).first()
         return user_state.state if user_state else None
@@ -171,10 +296,17 @@ def get_user_state(telegram_id):
 
 def create_order(telegram_id, imei, order_id):
     """Create new order in database"""
-    db = get_db()
-    if not db:
-        return None
+    if not Session:
+        # Fallback to in-memory storage
+        pending_orders[order_id] = {
+            'imei': imei,
+            'user_id': telegram_id,
+            'timestamp': datetime.now(),
+            'status': 'pending'
+        }
+        return True
     
+    db = get_db()
     try:
         order = Order(
             order_id=order_id,
@@ -194,10 +326,11 @@ def create_order(telegram_id, imei, order_id):
 
 def get_order(order_id):
     """Get order from database"""
-    db = get_db()
-    if not db:
-        return None
+    if not Session:
+        # Fallback to in-memory storage
+        return pending_orders.get(order_id)
     
+    db = get_db()
     try:
         return db.query(Order).filter_by(order_id=order_id).first()
     except Exception as e:
@@ -208,10 +341,16 @@ def get_order(order_id):
 
 def update_order_status(order_id, status, api_response=None):
     """Update order status in database"""
-    db = get_db()
-    if not db:
+    if not Session:
+        # Fallback to in-memory storage
+        if order_id in pending_orders:
+            pending_orders[order_id]['status'] = status
+            if api_response:
+                pending_orders[order_id]['api_response'] = api_response
+            return True
         return False
     
+    db = get_db()
     try:
         order = db.query(Order).filter_by(order_id=order_id).first()
         if order:
@@ -232,10 +371,37 @@ def update_order_status(order_id, status, api_response=None):
 
 def get_stats():
     """Get statistics from database"""
-    db = get_db()
-    if not db:
-        return {}
+    if not Session:
+        # Fallback stats for in-memory storage
+        total_users = len(user_languages)
+        total_orders = len(pending_orders)
+        paid_orders = sum(1 for order in pending_orders.values() if order['status'] == 'paid')
+        pending_orders_count = sum(1 for order in pending_orders.values() if order['status'] == 'pending')
+        total_revenue = paid_orders * float(PRICE)
+        
+        today = datetime.now().date()
+        today_orders = sum(1 for order in pending_orders.values() 
+                          if order['timestamp'].date() == today and order['status'] == 'paid')
+        today_revenue = today_orders * float(PRICE)
+        
+        seven_days_ago = datetime.now() - timedelta(days=7)
+        last_7_days_orders = sum(1 for order in pending_orders.values() 
+                                if order['timestamp'] > seven_days_ago and order['status'] == 'paid')
+        last_7_days_revenue = last_7_days_orders * float(PRICE)
+        
+        return {
+            'total_users': total_users,
+            'total_orders': total_orders,
+            'paid_orders': paid_orders,
+            'pending_orders': pending_orders_count,
+            'total_revenue': total_revenue,
+            'today_orders': today_orders,
+            'today_revenue': today_revenue,
+            'last_7_days_orders': last_7_days_orders,
+            'last_7_days_revenue': last_7_days_revenue
+        }
     
+    db = get_db()
     try:
         total_users = db.query(User).count()
         total_orders = db.query(Order).count()
@@ -278,7 +444,59 @@ def get_stats():
     finally:
         close_db(db)
 
-# Update your existing functions to use the database
+# Helper functions
+def get_text(user_id, key, *args):
+    lang = get_user_language(user_id)
+    text = texts.get(lang, texts['en']).get(key, key)
+    return text.format(*args) if args else text
+
+def get_field_label(user_id, field):
+    lang = get_user_language(user_id)
+    return field_labels.get(lang, field_labels['en']).get(field, field)
+
+def send_message(chat_id, text, reply_markup=None, parse_mode=None):
+    try:
+        data = {
+            "chat_id": chat_id,
+            "text": text
+        }
+        if reply_markup:
+            data["reply_markup"] = json.dumps(reply_markup)
+        if parse_mode:
+            data["parse_mode"] = parse_mode
+            
+        response = requests.post(f"{TELEGRAM_API}/sendMessage", json=data)
+        result = response.json()
+        
+        if not result.get('ok'):
+            logger.error(f"Failed to send message: {result}")
+            # If Markdown parsing failed, try again without parse_mode
+            if parse_mode and 'parse entities' in result.get('description', ''):
+                logger.info("Retrying without parse_mode")
+                data.pop('parse_mode', None)
+                response = requests.post(f"{TELEGRAM_API}/sendMessage", json=data)
+                result = response.json()
+        
+        logger.info(f"Message sent: {result}")
+        return result
+    except Exception as e:
+        logger.error(f"Failed to send message: {e}")
+        return None
+
+def answer_callback_query(callback_query_id):
+    try:
+        requests.post(f"{TELEGRAM_API}/answerCallbackQuery", json={"callback_query_id": callback_query_id})
+    except Exception as e:
+        logger.error(f"Failed to answer callback query: {e}")
+
+def handle_start(chat_id):
+    keyboard = {
+        "inline_keyboard": [[
+            {"text": "🇬🇧 English", "callback_data": "lang_en"},
+            {"text": "🇷🇺 Русский", "callback_data": "lang_ru"}
+        ]]
+    }
+    send_message(chat_id, texts['en']['choose_language'], reply_markup=keyboard)
 
 def handle_language_selection(chat_id, language):
     """Handle language selection"""
@@ -294,6 +512,35 @@ def handle_language_selection(chat_id, language):
     
     send_message(chat_id, get_text(chat_id, 'language_selected'))
     send_message(chat_id, get_text(chat_id, 'welcome'), reply_markup=keyboard)
+
+def quick_action_keyboard(user_id):
+    return {
+        "keyboard": [
+            [{"text": get_text(user_id, 'check_another')}],
+            [{"text": get_text(user_id, 'back')}]
+        ],
+        "resize_keyboard": True
+    }
+
+def is_button_match(text, button_key, user_id):
+    """Check if text matches a button, handling emoji variations"""
+    expected_text = get_text(user_id, button_key)
+    
+    # Direct match
+    if text == expected_text:
+        return True
+    
+    # Check if the key words are present (ignoring emojis)
+    if button_key == 'help' and ('help' in text.lower() or 'помощь' in text.lower()):
+        return True
+    elif button_key == 'check_imei' and ('check' in text.lower() or 'imei' in text.lower() or 'проверить' in text.lower()):
+        return True
+    elif button_key == 'check_another' and ('another' in text.lower() or 'другой' in text.lower()):
+        return True
+    elif button_key == 'back' and ('back' in text.lower() or 'назад' in text.lower()):
+        return True
+    
+    return False
 
 def handle_text(chat_id, text):
     """Handle text messages"""
@@ -515,250 +762,6 @@ def send_imei_result(user_id, imei, order_id):
         send_message(user_id, msg, reply_markup=quick_action_keyboard(user_id))
         notify_admins(user_id, imei, {"error": str(e)})
 
-# Update the payeer callback to use database
-@app.route("/payeer", methods=["POST"])
-def payeer_callback():
-    try:
-        form = request.form.to_dict()
-        logger.info(f"Payeer callback: {form}")
-        
-        order_id = form.get("m_orderid")
-        if form.get("m_status") == "success" and order_id:
-            order = get_order(order_id)
-            if order and order.status == 'pending':
-                update_order_status(order_id, 'paid')
-                send_imei_result(order.user_telegram_id, order.imei, order_id)
-        
-        return order_id or "OK"
-    except Exception as e:
-        logger.error(f"Payeer error: {e}")
-        return "Error", 500
-
-@app.route("/success")
-def success():
-    order_id = request.args.get("m_orderid")
-    if order_id:
-        order = get_order(order_id)
-        if order and order.status == 'pending':
-            update_order_status(order_id, 'paid')
-            send_imei_result(order.user_telegram_id, order.imei, order_id)
-    
-    return """
-    <html>
-    <head>
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <style>
-            body { text-align: center; padding: 50px; font-family: Arial; background: #f0f0f0; }
-            .container { background: white; padding: 30px; border-radius: 10px; max-width: 400px; margin: 0 auto; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
-            h1 { color: #28a745; }
-        </style>
-    </head>
-    <body>
-        <div class="container">
-            <h1>✅ Payment Successful!</h1>
-            <p>Check your Telegram for the IMEI result.</p>
-            <p>You can close this window.</p>
-        </div>
-    </body>
-    </html>
-    """
-
-# Update get_text to use database
-def get_text(user_id, key, *args):
-    lang = get_user_language(user_id)
-    text = texts.get(lang, texts['en']).get(key, key)
-    return text.format(*args) if args else text
-
-# Add cleanup for database connections
-@app.teardown_appcontext
-def shutdown_session(exception=None):
-    if Session:
-        Session.remove()
-
-# Set webhook
-try:
-    response = requests.post(f"{TELEGRAM_API}/setWebhook", json={"url": f"{BASE_URL}/webhook"})
-    logger.info(f"Webhook set: {response.json()}")
-except Exception as e:
-    logger.error(f"Failed to set webhook: {e}")
-
-# Translations
-texts = {
-    'en': {
-        'welcome': "👋 Welcome! Choose an option:",
-        'language_selected': "🇬🇧 English language selected.",
-        'check_imei': "🔍 Check IMEI",
-        'help': "❓ Help",
-        'enter_imei': "🔢 Please enter your 15-digit IMEI number.",
-        'invalid_imei': "❌ Invalid IMEI. It must be 15 digits.",
-        'payment_prompt': "📱 IMEI: {}\nTo receive your result, please complete payment:",
-        'pay_button': "💳 Pay $0.32 USD",
-        'choose_language': "Please select your language / Пожалуйста, выберите ваш язык:",
-        'help_text': "📋 How to use:\n1. Send your 15-digit IMEI\n2. Click payment button\n3. Get your result\n\n📱 *How to find IMEI:*\n• Dial \\*#06#\n• Settings → About phone → IMEI\n\n⚠️ No refunds for wrong IMEI numbers!",
-        'payment_successful': "✅ Payment successful!",
-        'imei_info': "📱 IMEI Info:",
-        'imei_not_found': "⚠️ IMEI not found in the database. Please ensure it is correct.",
-        'service_unavailable': "❌ Service temporarily unavailable. Please try again later.",
-        'check_another': "🔍 Check another IMEI",
-        'admin_payment_received': "💰 Payment received!",
-        'admin_user': "User",
-        'admin_api_response': "API Response",
-        'back': "🔙 Back",
-        'use_menu': "❗ Please use the menu buttons below.",
-        'stats_title': "📊 *Bot Statistics*\n\n",
-        'stats_total_users': "👥 Total users: {}",
-        'stats_total_orders': "📦 Total orders: {}",
-        'stats_paid_orders': "✅ Paid orders: {}",
-        'stats_pending_orders': "⏳ Pending orders: {}",
-        'stats_revenue': "💰 Total revenue: ${:.2f}",
-        'stats_today': "\n📅 *Today's Stats:*\n",
-        'stats_today_orders': "📦 Orders today: {}",
-        'stats_today_revenue': "💰 Revenue today: ${:.2f}",
-        'stats_last_7_days': "\n📈 *Last 7 Days:*\n",
-        'stats_7_days_orders': "📦 Orders: {}",
-        'stats_7_days_revenue': "💰 Revenue: ${:.2f}",
-        'stats_no_access': "❌ You don't have access to this command."
-    },
-    'ru': {
-        'welcome': "👋 Добро пожаловать! Выберите опцию:",
-        'language_selected': "🇷🇺 Выбран русский язык.",
-        'check_imei': "🔍 Проверить IMEI",
-        'help': "❓ Помощь",
-        'enter_imei': "🔢 Пожалуйста, введите ваш 15-значный номер IMEI.",
-        'invalid_imei': "❌ Неверный IMEI. Он должен состоять из 15 цифр.",
-        'payment_prompt': "📱 IMEI: {}\nЧтобы получить результат, пожалуйста, выполните оплату:",
-        'pay_button': "💳 Оплатить $0.32 USD",
-        'choose_language': "Please select your language / Пожалуйста, выберите ваш язык:",
-        'help_text': "📋 Как использовать:\n1. Отправьте 15-значный IMEI\n2. Нажмите кнопку оплаты\n3. Получите результат\n\n📱 *Как найти IMEI:*\n• Наберите \\*#06#\n• Настройки → О телефоне → IMEI\n\n⚠️ Возврат за неверный IMEI не предоставляется!",
-        'payment_successful': "✅ Оплата успешна!",
-        'imei_info': "📱 Информация об IMEI:",
-        'imei_not_found': "⚠️ IMEI не найден в базе данных. Пожалуйста, убедитесь, что он правильный.",
-        'service_unavailable': "❌ Сервис временно недоступен. Пожалуйста, попробуйте позже.",
-        'check_another': "🔍 Проверить другой IMEI",
-        'admin_payment_received': "💰 Платеж получен!",
-        'admin_user': "Пользователь",
-        'admin_api_response': "Ответ API",
-        'back': "🔙 Назад",
-        'use_menu': "❗ Пожалуйста, используйте кнопки меню ниже.",
-        'stats_title': "📊 *Статистика бота*\n\n",
-        'stats_total_users': "👥 Всего пользователей: {}",
-        'stats_total_orders': "📦 Всего заказов: {}",
-        'stats_paid_orders': "✅ Оплаченных заказов: {}",
-        'stats_pending_orders': "⏳ Ожидающих оплаты: {}",
-        'stats_revenue': "💰 Общий доход: ${:.2f}",
-        'stats_today': "\n📅 *Статистика за сегодня:*\n",
-        'stats_today_orders': "📦 Заказов сегодня: {}",
-        'stats_today_revenue': "💰 Доход за сегодня: ${:.2f}",
-        'stats_last_7_days': "\n📈 *Последние 7 дней:*\n",
-        'stats_7_days_orders': "📦 Заказов: {}",
-        'stats_7_days_revenue': "💰 Доход: ${:.2f}",
-        'stats_no_access': "❌ У вас нет доступа к этой команде."
-    }
-}
-
-# Field labels for IMEI results
-field_labels = {
-    'en': {
-        'imei': "*IMEI:*",
-        'imei2': "*IMEI2:*",
-        'meid': "*MEID:*",
-        'serial': "*Serial:*",
-        'desc': "*Desc:*",
-        'purchase': "*Purchase:*",
-        'coverage': "*Coverage:*",
-        'replaced': "*Replaced:*",
-        'simlock': "*SIM Lock:*"
-    },
-    'ru': {
-        'imei': "*IMEI:*",
-        'imei2': "*IMEI2:*",
-        'meid': "*MEID:*",
-        'serial': "*Серийный номер:*",
-        'desc': "*Описание:*",
-        'purchase': "*Дата покупки:*",
-        'coverage': "*Гарантия:*",
-        'replaced': "*Заменен:*",
-        'simlock': "*SIM-блокировка:*"
-    }
-}
-
-def get_field_label(user_id, field):
-    lang = get_user_language(user_id)
-    return field_labels.get(lang, field_labels['en']).get(field, field)
-
-def send_message(chat_id, text, reply_markup=None, parse_mode=None):
-    try:
-        data = {
-            "chat_id": chat_id,
-            "text": text
-        }
-        if reply_markup:
-            data["reply_markup"] = json.dumps(reply_markup)
-        if parse_mode:
-            data["parse_mode"] = parse_mode
-            
-        response = requests.post(f"{TELEGRAM_API}/sendMessage", json=data)
-        result = response.json()
-        
-        if not result.get('ok'):
-            logger.error(f"Failed to send message: {result}")
-            # If Markdown parsing failed, try again without parse_mode
-            if parse_mode and 'parse entities' in result.get('description', ''):
-                logger.info("Retrying without parse_mode")
-                data.pop('parse_mode', None)
-                response = requests.post(f"{TELEGRAM_API}/sendMessage", json=data)
-                result = response.json()
-        
-        logger.info(f"Message sent: {result}")
-        return result
-    except Exception as e:
-        logger.error(f"Failed to send message: {e}")
-        return None
-
-def answer_callback_query(callback_query_id):
-    try:
-        requests.post(f"{TELEGRAM_API}/answerCallbackQuery", json={"callback_query_id": callback_query_id})
-    except Exception as e:
-        logger.error(f"Failed to answer callback query: {e}")
-
-def handle_start(chat_id):
-    keyboard = {
-        "inline_keyboard": [[
-            {"text": "🇬🇧 English", "callback_data": "lang_en"},
-            {"text": "🇷🇺 Русский", "callback_data": "lang_ru"}
-        ]]
-    }
-    send_message(chat_id, texts['en']['choose_language'], reply_markup=keyboard)
-
-def quick_action_keyboard(user_id):
-    return {
-        "keyboard": [
-            [{"text": get_text(user_id, 'check_another')}],
-            [{"text": get_text(user_id, 'back')}]
-        ],
-        "resize_keyboard": True
-    }
-
-def is_button_match(text, button_key, user_id):
-    """Check if text matches a button, handling emoji variations"""
-    expected_text = get_text(user_id, button_key)
-    
-    # Direct match
-    if text == expected_text:
-        return True
-    
-    # Check if the key words are present (ignoring emojis)
-    if button_key == 'help' and ('help' in text.lower() or 'помощь' in text.lower()):
-        return True
-    elif button_key == 'check_imei' and ('check' in text.lower() or 'imei' in text.lower() or 'проверить' in text.lower()):
-        return True
-    elif button_key == 'check_another' and ('another' in text.lower() or 'другой' in text.lower()):
-        return True
-    elif button_key == 'back' and ('back' in text.lower() or 'назад' in text.lower()):
-        return True
-    
-    return False
-
 def notify_admins(user_id, imei, api_response=None):
     """Notify admins about the payment with API details"""
     for admin_id in ADMIN_IDS:
@@ -775,6 +778,7 @@ def notify_admins(user_id, imei, api_response=None):
         
         send_message(admin_id, admin_msg)
 
+# Flask routes
 @app.route("/")
 def home():
     return {"status": "healthy", "bot": "running"}, 200
@@ -803,3 +807,105 @@ def webhook():
         elif "callback_query" in update:
             query = update["callback_query"]
             chat_id = query["message"]["chat"]["id"]
+            data = query["data"]
+            
+            if data.startswith('lang_'):
+                language = data.split('_')[1]
+                handle_language_selection(chat_id, language)
+                answer_callback_query(query["id"])
+        
+        return "OK"
+    except Exception as e:
+        logger.error(f"Webhook error: {e}")
+        return "OK"
+
+@app.route("/payeer", methods=["POST"])
+def payeer_callback():
+    try:
+        form = request.form.to_dict()
+        logger.info(f"Payeer callback: {form}")
+        
+        order_id = form.get("m_orderid")
+        if form.get("m_status") == "success" and order_id:
+            order = get_order(order_id)
+            if not Session and order_id in pending_orders:
+                # Fallback for in-memory storage
+                order = pending_orders[order_id]
+                if order['status'] == 'pending':
+                    order['status'] = 'paid'
+                    send_imei_result(order['user_id'], order['imei'], order_id)
+            elif order and order.status == 'pending':
+                update_order_status(order_id, 'paid')
+                send_imei_result(order.user_telegram_id, order.imei, order_id)
+        
+        return order_id or "OK"
+    except Exception as e:
+        logger.error(f"Payeer error: {e}")
+        return "Error", 500
+
+@app.route("/success")
+def success():
+    order_id = request.args.get("m_orderid")
+    if order_id:
+        order = get_order(order_id)
+        if not Session and order_id in pending_orders:
+            # Fallback for in-memory storage
+            order = pending_orders[order_id]
+            if order['status'] == 'pending':
+                order['status'] = 'paid'
+                send_imei_result(order['user_id'], order['imei'], order_id)
+        elif order and order.status == 'pending':
+            update_order_status(order_id, 'paid')
+            send_imei_result(order.user_telegram_id, order.imei, order_id)
+    
+    return """
+    <html>
+    <head>
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <style>
+            body { text-align: center; padding: 50px; font-family: Arial; background: #f0f0f0; }
+            .container { background: white; padding: 30px; border-radius: 10px; max-width: 400px; margin: 0 auto; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+            h1 { color: #28a745; }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <h1>✅ Payment Successful!</h1>
+            <p>Check your Telegram for the IMEI result.</p>
+            <p>You can close this window.</p>
+        </div>
+    </body>
+    </html>
+    """
+
+@app.route("/fail")
+def fail():
+    return """
+    <html>
+    <head>
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <style>
+            body { text-align: center; padding: 50px; font-family: Arial; background: #f0f0f0; }
+            .container { background: white; padding: 30px; border-radius: 10px; max-width: 400px; margin: 0 auto; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+            h1 { color: #dc3545; }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <h1>❌ Payment Failed</h1>
+            <p>Please return to Telegram and try again.</p>
+        </div>
+    </body>
+    </html>
+    """
+
+# Add cleanup for database connections
+@app.teardown_appcontext
+def shutdown_session(exception=None):
+    if Session:
+        Session.remove()
+
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 8080))
+    logger.info(f"Starting on port {port}")
+    app.run(host="0.0.0.0", port=port, debug=False)
