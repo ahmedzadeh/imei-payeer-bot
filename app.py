@@ -191,28 +191,50 @@ texts = {
     }
 }
 
-# Field labels for IMEI results
+# Field labels for IMEI results - Updated for new API fields
 field_labels = {
     'en': {
         'imei': "*IMEI:*",
-        'imei2': "*IMEI2:*",
         'meid': "*MEID:*",
-        'serial': "*Serial:*",
-        'desc': "*Desc:*",
-        'purchase': "*Purchase:*",
-        'coverage': "*Coverage:*",
-        'replaced': "*Replaced:*",
+        'serial': "*Serial Number:*",
+        'model': "*Model:*",
+        'purchased_in': "*Purchased In:*",
+        'purchase_date': "*Estimated Purchase Date:*",
+        'valid_purchase': "*Valid Purchase Date:*",
+        'registered': "*Registered Device:*",
+        'activated': "*Activated:*",
+        'phone_support': "*Phone Technical Support:*",
+        'warranty': "*Repairs & Service Coverage:*",
+        'warranty_start': "*Warranty Start Date:*",
+        'warranty_end': "*Warranty End Date:*",
+        'warranty_days': "*Warranty Remaining Days:*",
+        'find_my': "*Find my iPhone:*",
+        'loaner': "*Loaner:*",
+        'replaced': "*Is Replaced:*",
+        'carrier': "*Carrier Name:*",
+        'next_policy': "*Next Activation Policy ID:*",
         'simlock': "*SIM Lock:*"
     },
     'ru': {
         'imei': "*IMEI:*",
-        'imei2': "*IMEI2:*",
         'meid': "*MEID:*",
         'serial': "*Серийный номер:*",
-        'desc': "*Описание:*",
-        'purchase': "*Дата покупки:*",
-        'coverage': "*Гарантия:*",
-        'replaced': "*Заменен:*",
+        'model': "*Модель:*",
+        'purchased_in': "*Куплено в:*",
+        'purchase_date': "*Предполагаемая дата покупки:*",
+        'valid_purchase': "*Действительная дата покупки:*",
+        'registered': "*Зарегистрированное устройство:*",
+        'activated': "*Активировано:*",
+        'phone_support': "*Техническая поддержка по телефону:*",
+        'warranty': "*Ремонт и обслуживание:*",
+        'warranty_start': "*Начало гарантии:*",
+        'warranty_end': "*Окончание гарантии:*",
+        'warranty_days': "*Осталось дней гарантии:*",
+        'find_my': "*Найти iPhone:*",
+        'loaner': "*Подменное устройство:*",
+        'replaced': "*Заменено:*",
+        'carrier': "*Оператор:*",
+        'next_policy': "*ID следующей политики активации:*",
         'simlock': "*SIM-блокировка:*"
     }
 }
@@ -261,6 +283,7 @@ def get_user_language(telegram_id):
     if not Session:
         # Fallback to in-memory storage
         return user_languages.get(str(telegram_id), 'en')
+    
     db = get_db()
     try:
         user = db.query(User).filter_by(telegram_id=str(telegram_id)).first()
@@ -610,7 +633,7 @@ def is_button_match(text, button_key, user_id):
     elif button_key == 'check_imei' and ('check' in text.lower() or 'imei' in text.lower() or 'проверить' in text.lower()):
         return True
     elif button_key == 'check_another' and ('another' in text.lower() or 'другой' in text.lower()):
-        return True
+        return True    
     elif button_key == 'back' and ('back' in text.lower() or 'назад' in text.lower()):
         return True
     
@@ -891,8 +914,6 @@ def search_imei_history(chat_id, imei):
                         api_data = json.loads(order.api_response)
                         if 'Model' in api_data:
                             msg += f"Model: {api_data['Model']}\n"
-                        elif 'Description' in api_data:
-                            msg += f"Model: {api_data['Description']}\n"
                     except:
                         pass
                 msg += "\n"
@@ -909,10 +930,10 @@ def send_imei_result(user_id, imei, order_id):
     try:
         logger.info(f"Calling IMEI API for: {imei}")
         
-        # Use simlock3 checker as specified
+        # Use simlock checker (changed from simlock3)
         params = {
             "api_key": IMEI_API_KEY,
-            "checker": "simlock3",
+            "checker": "simlock",  # Changed from simlock3 to simlock
             "number": imei
         }
         
@@ -935,39 +956,56 @@ def send_imei_result(user_id, imei, order_id):
                     send_message(user_id, msg, reply_markup=quick_action_keyboard(user_id))
                 else:
                     # Format the response with proper language and markdown
-                    msg = f"*{get_text(user_id, 'payment_successful')}*\n\n*{get_text(user_id, 'imei_info')}*\n"
-                    
-                    # Define the exact order and format for fields
+                    msg = f"*{get_text(user_id, 'payment_successful')}*\n\n*{get_text(user_id, 'imei_info')}*\n\n"                    
+                    # Format the response with new API fields
                     if 'IMEI' in data:
-                        msg += f"🔹 {get_field_label(user_id, 'imei')} `{data['IMEI']}`\n"
-                    if 'IMEI2' in data:
-                        msg += f"🔹 {get_field_label(user_id, 'imei2')} `{data['IMEI2']}`\n"
+                        msg += f"📱 {get_field_label(user_id, 'imei')} `{data['IMEI']}`\n"
                     if 'MEID' in data:
-                        msg += f"🔹 {get_field_label(user_id, 'meid')} `{data['MEID']}`\n"
+                        msg += f"📟 {get_field_label(user_id, 'meid')} `{data['MEID']}`\n"
                     if 'Serial Number' in data:
-                        msg += f"🔹 {get_field_label(user_id, 'serial')} `{data['Serial Number']}`\n"
-                    if 'Description' in data:
-                        msg += f"🔹 {get_field_label(user_id, 'desc')} `{data['Description']}`\n"
-                    elif 'Model' in data:
-                        msg += f"🔹 {get_field_label(user_id, 'desc')} `{data['Model']}`\n"
-                    if 'Date of purchase' in data:
-                        msg += f"🔹 {get_field_label(user_id, 'purchase')} `{data['Date of purchase']}`\n"
-                    elif 'Purchase Date' in data:
-                        msg += f"🔹 {get_field_label(user_id, 'purchase')} `{data['Purchase Date']}`\n"
-                    if 'Repairs & Service Coverage' in data:
-                        msg += f"🔹 {get_field_label(user_id, 'coverage')} `{data['Repairs & Service Coverage']}`\n"
-                    elif 'Coverage' in data:
-                        msg += f"🔹 {get_field_label(user_id, 'coverage')} `{data['Coverage']}`\n"
-                    elif 'Warranty' in data:
-                        msg += f"🔹 {get_field_label(user_id, 'coverage')} `{data['Warranty']}`\n"
+                        msg += f"🔢 {get_field_label(user_id, 'serial')} `{data['Serial Number']}`\n"
+                    if 'Model' in data:
+                        msg += f"📱 {get_field_label(user_id, 'model')} `{data['Model']}`\n\n"
+                    
+                    # Purchase information
+                    if 'Purchased In' in data:
+                        msg += f"🌍 {get_field_label(user_id, 'purchased_in')} `{data['Purchased In']}`\n"
+                    if 'Estimated Purchase Date' in data:
+                        msg += f"📅 {get_field_label(user_id, 'purchase_date')} `{data['Estimated Purchase Date']}`\n"
+                    if 'Valid Purchase Date' in data:
+                        msg += f"✅ {get_field_label(user_id, 'valid_purchase')} `{data['Valid Purchase Date']}`\n\n"
+                    
+                    # Device status
+                    if 'Registered Device' in data:
+                        msg += f"📋 {get_field_label(user_id, 'registered')} `{data['Registered Device']}`\n"
+                    if 'Activated' in data:
+                        msg += f"🔓 {get_field_label(user_id, 'activated')} `{data['Activated']}`\n"
+                    if 'Find my iPhone' in data:
+                        msg += f"📍 {get_field_label(user_id, 'find_my')} `{data['Find my iPhone']}`\n"
+                    if 'Loaner' in data:
+                        msg += f"🔄 {get_field_label(user_id, 'loaner')} `{data['Loaner']}`\n"
                     if 'is replaced' in data:
-                        msg += f"🔹 {get_field_label(user_id, 'replaced')} `{data['is replaced']}`\n"
-                    elif 'Replaced' in data:
-                        msg += f"🔹 {get_field_label(user_id, 'replaced')} `{data['Replaced']}`\n"
+                        msg += f"🔄 {get_field_label(user_id, 'replaced')} `{data['is replaced']}`\n\n"
+                    
+                    # Support and warranty
+                    if 'Phone Technical Support' in data:
+                        msg += f"📞 {get_field_label(user_id, 'phone_support')} `{data['Phone Technical Support']}`\n"
+                    if 'Repairs & Service Coverage' in data:
+                        msg += f"🛠 {get_field_label(user_id, 'warranty')} `{data['Repairs & Service Coverage']}`\n"
+                    if 'Warranty Start Date' in data:
+                        msg += f"📅 {get_field_label(user_id, 'warranty_start')} `{data['Warranty Start Date']}`\n"
+                    if 'Warranty End Date' in data:
+                        msg += f"📅 {get_field_label(user_id, 'warranty_end')} `{data['Warranty End Date']}`\n"
+                    if 'Warranty Remaining Days' in data:
+                        msg += f"⏳ {get_field_label(user_id, 'warranty_days')} `{data['Warranty Remaining Days']}`\n\n"
+                    
+                    # Carrier and SIM lock
+                    if 'Carrier Name' in data:
+                        msg += f"📡 {get_field_label(user_id, 'carrier')} `{data['Carrier Name']}`\n"
+                    if 'Next Activation Policy ID' in data:
+                        msg += f"🔢 {get_field_label(user_id, 'next_policy')} `{data['Next Activation Policy ID']}`\n"
                     if 'SIM Lock' in data:
-                        msg += f"🔹 {get_field_label(user_id, 'simlock')} `{data['SIM Lock']}`\n"
-                    elif 'SimLock' in data:
-                        msg += f"🔹 {get_field_label(user_id, 'simlock')} `{data['SimLock']}`\n"
+                        msg += f"🔒 {get_field_label(user_id, 'simlock')} `{data['SIM Lock']}`\n"
                 
                     send_message(user_id, msg, reply_markup=quick_action_keyboard(user_id), parse_mode="Markdown")
                 
