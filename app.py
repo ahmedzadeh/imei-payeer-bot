@@ -8,6 +8,7 @@ import base64
 from urllib.parse import urlencode
 from datetime import datetime, timedelta
 import json
+import time
 from sqlalchemy import create_engine, Column, String, Integer, DateTime, Float, Boolean, Text
 from sqlalchemy.orm import declarative_base, sessionmaker, scoped_session
 from sqlalchemy.pool import NullPool
@@ -80,7 +81,16 @@ user_states = {}
 Session = None
 try:
     if DATABASE_URL:
-        engine = create_engine(DATABASE_URL, poolclass=NullPool, echo=False)
+        # Add connection pool settings for better reliability
+        engine = create_engine(
+            DATABASE_URL, 
+            poolclass=NullPool,
+            echo=False,
+            connect_args={
+                "connect_timeout": 10,
+                "options": "-c statement_timeout=30000"
+            }
+        )
         Base.metadata.create_all(engine)
         Session = scoped_session(sessionmaker(bind=engine))
         logger.info("Database connected successfully")
@@ -230,7 +240,7 @@ field_labels = {
         'warranty_start': "*Начало гарантии:*",
         'warranty_end': "*Окончание гарантии:*",
         'warranty_days': "*Осталось дней гарантии:*",
-        'find_my': "*Найти iPhone:*",
+        'find_my': "*Найти iPhone:*",        
         'loaner': "*Подменное устройство:*",
         'replaced': "*Заменено:*",
         'carrier': "*Оператор:*",
@@ -631,9 +641,9 @@ def is_button_match(text, button_key, user_id):
     if button_key == 'help' and ('help' in text.lower() or 'помощь' in text.lower()):
         return True
     elif button_key == 'check_imei' and ('check' in text.lower() or 'imei' in text.lower() or 'проверить' in text.lower()):
-        return True
-    elif button_key == 'check_another' and ('another' in text.lower() or 'другой' in text.lower()):
         return True    
+    elif button_key == 'check_another' and ('another' in text.lower() or 'другой' in text.lower()):
+        return True
     elif button_key == 'back' and ('back' in text.lower() or 'назад' in text.lower()):
         return True
     
@@ -926,115 +936,140 @@ def search_imei_history(chat_id, imei):
             close_db(db)
 
 def send_imei_result(user_id, imei, order_id):
-    """Send IMEI check result to user"""
-    try:
-        logger.info(f"Calling IMEI API for: {imei}")
-        
-        # Use simlock checker (changed from simlock3)
-        params = {
-            "api_key": IMEI_API_KEY,
-            "checker": "simlock",  # Changed from simlock3 to simlock
-            "number": imei
-        }
-        
-        # Make the API request
-        res = requests.get(IMEI_API_URL, params=params, timeout=15)
-        
-        logger.info(f"API response status: {res.status_code}")
-        logger.info(f"API response: {res.text}")
-        
-        if res.status_code == 200:
-            try:
-                data = res.json()
-                
-                # Update order with API response
-                update_order_status(order_id, 'paid', data)
-                
-                # Check if there's an error in the response
-                if 'error' in data:
-                    msg = f"{get_text(user_id, 'payment_successful')}\n\n{get_text(user_id, 'imei_not_found')}"
+    """Send IMEI check result to user with retry logic"""
+    max_retries = 3
+    retry_delay = 2
+    
+    for attempt in range(max_retries):
+        try:
+            logger.info(f"Calling IMEI API for: {imei} (attempt {attempt + 1}/{max_retries})")
+            
+            # Use simlock checker (changed from simlock3)
+            params = {
+                "api_key": IMEI_API_KEY,
+                "checker": "simlock",  # Changed from simlock3 to simlock
+                "number": imei
+            }
+            
+            # Make the API request with increased timeout
+            res = requests.get(IMEI_API_URL, params=params, timeout=30)
+            
+            logger.info(f"API response status: {res.status_code}")
+            logger.info(f"API response: {res.text}")
+            
+            if res.status_code == 200:
+                try:
+                    data = res.json()
+                    
+                    # Update order with API response
+                    update_order_status(order_id, 'paid', data)
+                    
+                    # Check if there's an error in the response
+                    if 'error' in data:
+                        msg = f"{get_text(user_id, 'payment_successful')}\n\n{get_text(user_id, 'imei_not_found')}"                        
+                        send_message(user_id, msg, reply_markup=quick_action_keyboard(user_id))
+                    else:
+                        # Format the response with new API fields
+                        msg = f"*{get_text(user_id, 'payment_successful')}*\n\n*{get_text(user_id, 'imei_info')}*\n\n"
+                        
+                        # Format the response with new API fields
+                        if 'IMEI' in data:
+                            msg += f"📱 {get_field_label(user_id, 'imei')} `{data['IMEI']}`\n"
+                        if 'MEID' in data:
+                            msg += f"📟 {get_field_label(user_id, 'meid')} `{data['MEID']}`\n"
+                        if 'Serial Number' in data:
+                            msg += f"🔢 {get_field_label(user_id, 'serial')} `{data['Serial Number']}`\n"
+                        if 'Model' in data:
+                            msg += f"📱 {get_field_label(user_id, 'model')} `{data['Model']}`\n\n"
+                        
+                        # Purchase information
+                        if 'Purchased In' in data:
+                            msg += f"🌍 {get_field_label(user_id, 'purchased_in')} `{data['Purchased In']}`\n"
+                        if 'Estimated Purchase Date' in data:
+                            msg += f"📅 {get_field_label(user_id, 'purchase_date')} `{data['Estimated Purchase Date']}`\n"
+                        if 'Valid Purchase Date' in data:
+                            msg += f"✅ {get_field_label(user_id, 'valid_purchase')} `{data['Valid Purchase Date']}`\n\n"
+                        
+                        # Device status
+                        if 'Registered Device' in data:
+                            msg += f"📋 {get_field_label(user_id, 'registered')} `{data['Registered Device']}`\n"
+                        if 'Activated' in data:
+                            msg += f"🔓 {get_field_label(user_id, 'activated')} `{data['Activated']}`\n"
+                        if 'Find my iPhone' in data:
+                            msg += f"📍 {get_field_label(user_id, 'find_my')} `{data['Find my iPhone']}`\n"
+                        if 'Loaner' in data:
+                            msg += f"🔄 {get_field_label(user_id, 'loaner')} `{data['Loaner']}`\n"
+                        if 'is replaced' in data:
+                            msg += f"🔄 {get_field_label(user_id, 'replaced')} `{data['is replaced']}`\n\n"
+                        
+                        # Support and warranty
+                        if 'Phone Technical Support' in data:
+                            msg += f"📞 {get_field_label(user_id, 'phone_support')} `{data['Phone Technical Support']}`\n"
+                        if 'Repairs & Service Coverage' in data:
+                            msg += f"🛠 {get_field_label(user_id, 'warranty')} `{data['Repairs & Service Coverage']}`\n"
+                        if 'Warranty Start Date' in data:
+                            msg += f"📅 {get_field_label(user_id, 'warranty_start')} `{data['Warranty Start Date']}`\n"
+                        if 'Warranty End Date' in data:
+                            msg += f"📅 {get_field_label(user_id, 'warranty_end')} `{data['Warranty End Date']}`\n"
+                        if 'Warranty Remaining Days' in data:
+                            msg += f"⏳ {get_field_label(user_id, 'warranty_days')} `{data['Warranty Remaining Days']}`\n\n"
+                        
+                        # Carrier and SIM lock
+                        if 'Carrier Name' in data:
+                            msg += f"📡 {get_field_label(user_id, 'carrier')} `{data['Carrier Name']}`\n"
+                        if 'Next Activation Policy ID' in data:
+                            msg += f"🔢 {get_field_label(user_id, 'next_policy')} `{data['Next Activation Policy ID']}`\n"
+                        if 'SIM Lock' in data:
+                            msg += f"🔒 {get_field_label(user_id, 'simlock')} `{data['SIM Lock']}`\n"
+                    
+                        send_message(user_id, msg, reply_markup=quick_action_keyboard(user_id), parse_mode="Markdown")
+                    
+                    # Notify admins with full response
+                    notify_admins(user_id, imei, data)
+                    return  # Success, exit the function
+                    
+                except json.JSONDecodeError:
+                    logger.error("Failed to parse API response as JSON")
+                    msg = f"{get_text(user_id, 'payment_successful')}\n\n{get_text(user_id, 'service_unavailable')}"
                     send_message(user_id, msg, reply_markup=quick_action_keyboard(user_id))
+                    notify_admins(user_id, imei, {"error": "Invalid JSON response", "raw": res.text})
+                    return
+                    
+            else:
+                logger.error(f"API returned status code: {res.status_code}")
+                if attempt < max_retries - 1:
+                    logger.info(f"Retrying in {retry_delay} seconds...")
+                    time.sleep(retry_delay)
+                    continue
                 else:
-                    # Format the response with proper language and markdown
-                    msg = f"*{get_text(user_id, 'payment_successful')}*\n\n*{get_text(user_id, 'imei_info')}*\n\n"                    
-                    # Format the response with new API fields
-                    if 'IMEI' in data:
-                        msg += f"📱 {get_field_label(user_id, 'imei')} `{data['IMEI']}`\n"
-                    if 'MEID' in data:
-                        msg += f"📟 {get_field_label(user_id, 'meid')} `{data['MEID']}`\n"
-                    if 'Serial Number' in data:
-                        msg += f"🔢 {get_field_label(user_id, 'serial')} `{data['Serial Number']}`\n"
-                    if 'Model' in data:
-                        msg += f"📱 {get_field_label(user_id, 'model')} `{data['Model']}`\n\n"
-                    
-                    # Purchase information
-                    if 'Purchased In' in data:
-                        msg += f"🌍 {get_field_label(user_id, 'purchased_in')} `{data['Purchased In']}`\n"
-                    if 'Estimated Purchase Date' in data:
-                        msg += f"📅 {get_field_label(user_id, 'purchase_date')} `{data['Estimated Purchase Date']}`\n"
-                    if 'Valid Purchase Date' in data:
-                        msg += f"✅ {get_field_label(user_id, 'valid_purchase')} `{data['Valid Purchase Date']}`\n\n"
-                    
-                    # Device status
-                    if 'Registered Device' in data:
-                        msg += f"📋 {get_field_label(user_id, 'registered')} `{data['Registered Device']}`\n"
-                    if 'Activated' in data:
-                        msg += f"🔓 {get_field_label(user_id, 'activated')} `{data['Activated']}`\n"
-                    if 'Find my iPhone' in data:
-                        msg += f"📍 {get_field_label(user_id, 'find_my')} `{data['Find my iPhone']}`\n"
-                    if 'Loaner' in data:
-                        msg += f"🔄 {get_field_label(user_id, 'loaner')} `{data['Loaner']}`\n"
-                    if 'is replaced' in data:
-                        msg += f"🔄 {get_field_label(user_id, 'replaced')} `{data['is replaced']}`\n\n"
-                    
-                    # Support and warranty
-                    if 'Phone Technical Support' in data:
-                        msg += f"📞 {get_field_label(user_id, 'phone_support')} `{data['Phone Technical Support']}`\n"
-                    if 'Repairs & Service Coverage' in data:
-                        msg += f"🛠 {get_field_label(user_id, 'warranty')} `{data['Repairs & Service Coverage']}`\n"
-                    if 'Warranty Start Date' in data:
-                        msg += f"📅 {get_field_label(user_id, 'warranty_start')} `{data['Warranty Start Date']}`\n"
-                    if 'Warranty End Date' in data:
-                        msg += f"📅 {get_field_label(user_id, 'warranty_end')} `{data['Warranty End Date']}`\n"
-                    if 'Warranty Remaining Days' in data:
-                        msg += f"⏳ {get_field_label(user_id, 'warranty_days')} `{data['Warranty Remaining Days']}`\n\n"
-                    
-                    # Carrier and SIM lock
-                    if 'Carrier Name' in data:
-                        msg += f"📡 {get_field_label(user_id, 'carrier')} `{data['Carrier Name']}`\n"
-                    if 'Next Activation Policy ID' in data:
-                        msg += f"🔢 {get_field_label(user_id, 'next_policy')} `{data['Next Activation Policy ID']}`\n"
-                    if 'SIM Lock' in data:
-                        msg += f"🔒 {get_field_label(user_id, 'simlock')} `{data['SIM Lock']}`\n"
+                    msg = f"{get_text(user_id, 'payment_successful')}\n\n{get_text(user_id, 'service_unavailable')}"
+                    send_message(user_id, msg, reply_markup=quick_action_keyboard(user_id))
+                    notify_admins(user_id, imei, {"error": f"Status code: {res.status_code}"})
+                    return
                 
-                    send_message(user_id, msg, reply_markup=quick_action_keyboard(user_id), parse_mode="Markdown")
-                
-                # Notify admins with full response
-                notify_admins(user_id, imei, data)
-                
-            except json.JSONDecodeError:
-                logger.error("Failed to parse API response as JSON")
+        except requests.Timeout:
+            logger.error(f"API request timed out (attempt {attempt + 1}/{max_retries})")
+            if attempt < max_retries - 1:
+                logger.info(f"Retrying in {retry_delay} seconds...")
+                time.sleep(retry_delay)
+                continue
+            else:
                 msg = f"{get_text(user_id, 'payment_successful')}\n\n{get_text(user_id, 'service_unavailable')}"
                 send_message(user_id, msg, reply_markup=quick_action_keyboard(user_id))
-                notify_admins(user_id, imei, {"error": "Invalid JSON response", "raw": res.text})
-                
-        else:
-            logger.error(f"API returned status code: {res.status_code}")
-            msg = f"{get_text(user_id, 'payment_successful')}\n\n{get_text(user_id, 'service_unavailable')}"
-            send_message(user_id, msg, reply_markup=quick_action_keyboard(user_id))
-            notify_admins(user_id, imei, {"error": f"Status code: {res.status_code}"})
+                notify_admins(user_id, imei, {"error": "Timeout after retries"})
+                return
             
-    except requests.Timeout:
-        logger.error("API request timed out")
-        msg = f"{get_text(user_id, 'payment_successful')}\n\n{get_text(user_id, 'service_unavailable')}"
-        send_message(user_id, msg, reply_markup=quick_action_keyboard(user_id))
-        notify_admins(user_id, imei, {"error": "Timeout"})
-        
-    except Exception as e:
-        logger.error(f"IMEI API error: {e}")
-        msg = f"{get_text(user_id, 'payment_successful')}\n\n{get_text(user_id, 'service_unavailable')}"
-        send_message(user_id, msg, reply_markup=quick_action_keyboard(user_id))
-        notify_admins(user_id, imei, {"error": str(e)})
+        except Exception as e:
+            logger.error(f"IMEI API error: {e}")
+            if attempt < max_retries - 1:
+                logger.info(f"Retrying in {retry_delay} seconds...")
+                time.sleep(retry_delay)
+                continue
+            else:
+                msg = f"{get_text(user_id, 'payment_successful')}\n\n{get_text(user_id, 'service_unavailable')}"
+                send_message(user_id, msg, reply_markup=quick_action_keyboard(user_id))
+                notify_admins(user_id, imei, {"error": str(e)})
+                return
 
 def notify_admins(user_id, imei, api_response=None):
     """Notify admins about the payment with API details"""
@@ -1118,17 +1153,25 @@ def payeer_callback():
         order_id = form.get("m_orderid")
         if form.get("m_status") == "success" and order_id:
             order = get_order(order_id)
+            
+            # Check if order exists and hasn't been processed yet
             if not Session and order_id in pending_orders:
                 # Fallback for in-memory storage
                 order = pending_orders[order_id]
                 if order['status'] == 'pending':
                     order['status'] = 'paid'
                     send_imei_result(order['user_id'], order['imei'], order_id)
-            elif order and order.status == 'pending':
-                update_order_status(order_id, 'paid')
-                send_imei_result(order.user_telegram_id, order.imei, order_id)
+                elif order['status'] == 'paid':
+                    logger.info(f"Order {order_id} already processed, skipping")
+            elif order:
+                if order.status == 'pending':
+                    update_order_status(order_id, 'paid')
+                    send_imei_result(order.user_telegram_id, order.imei, order_id)
+                elif order.status == 'paid':
+                    logger.info(f"Order {order_id} already processed, skipping")
         
-        return order_id or "OK"
+        # Return proper response to stop Payeer from retrying
+        return f"{order_id}|success", 200
     except Exception as e:
         logger.error(f"Payeer error: {e}")
         return "Error", 500
